@@ -6,18 +6,25 @@
 
 | Field | Value |
 | --- | --- |
-| Last updated | 2026-10-31 (session 3) |
-| Current phase | Phase 3 complete — MVP implemented and verified; **Google Cloud deployment ready, not deployed** |
-| Overall status | Working end-to-end locally and from the packaged production artifact; all GCP artifacts prepared and verified as far as this machine allows |
+| Last updated | 2026-10-31 (session 5) |
+| Current phase | **Operonix 2.0 P0-1…P0-3 COMPLETE** — global/industry-neutral foundation shipped on top of the verified MVP |
+| Next phase | **STOPPED by instruction.** P1a (financial refactor, multi-currency, tax profiles) must not start until the owner approves |
+| Overall status | Working end-to-end locally: industry-neutral UI, country-derived onboarding, multi-workspace sign-in, refresh-token families, shared rate limiter |
 
 ---
 
 ## 1. Project overview
 
-**Operonix** is a multi-tenant vertical SaaS for underserved small service businesses. The first
-vertical is **cleaning companies** (2–50 staff). One workspace covers the lead-to-cash loop:
-customers and service locations → priced service catalogue → quotes → scheduled jobs with
-technicians → invoices and payments → owner dashboard and audit trail.
+**Operonix — The Operating Platform for Growing Businesses.** A multi-tenant, **industry-independent**
+business platform for small and growing service businesses anywhere in the world (cleaning, pest
+control, equipment rental, auto repair, plumbing/electrical, property maintenance, construction,
+local logistics, training centres, …). One workspace covers the lead-to-cash loop: customers and
+locations → catalog → quotations → scheduled jobs → invoices and payments → dashboard, reporting
+and audit trail.
+
+Industry is **configuration, not a code path**: `IndustryTemplate` supplies vocabulary and defaults
+only. A workspace also carries country, currency, locale, timezone and optional legal/tax details,
+so money and dates render correctly per market (including zero-decimal currencies such as JPY).
 
 Objectives (v1), all met: one customer record with locations; server-computed quote pricing;
 conflict-free scheduling including recurring visits; invoicing with partial payments, reversals and
@@ -34,7 +41,7 @@ native apps, attachments, route optimisation, SSO, SaaS billing, cross-workspace
 | Layer | Technology |
 | --- | --- |
 | Backend | Java 21, Spring Boot 3.3.13 (MVC, Security 6, Data JPA/Hibernate 6, Validation) |
-| Database | PostgreSQL 16, Flyway `V1__schema.sql`, `ddl-auto=validate` |
+| Database | PostgreSQL 16, Flyway `V1__schema.sql` + `V2__global_foundation.sql`, `ddl-auto=validate` |
 | Auth | JWT access tokens (HS256, 15 min, memory-only) + rotating opaque refresh tokens (SHA-256 at rest) |
 | API docs | springdoc-openapi 2.6 (dev only; disabled in prod) |
 | Logging | Logback; JSON encoder on stdout under the `prod` profile (Cloud Logging) |
@@ -105,8 +112,10 @@ committed and CI has never run. Creating the repository and pushing is step 1 of
 
 ## 5. Current task and next steps
 
-**Current task:** none in flight. Deployment artifacts are complete and verified as far as possible
-without Docker, `gcloud` and a Google Cloud project.
+**Current task:** none in flight. **P0-1…P0-3 are implemented and verified; the session stopped there
+on instruction.** P1a (multi-currency money model, tax profiles, costing) is NOT started.
+
+See §13 for the exact P0 state, the verification table and the next actionable steps.
 
 **Verified in session 3 (commands + results):**
 
@@ -351,3 +360,114 @@ The test state is unchanged from session 3 (backend 30 tests green, frontend typ
 explicit approval of the relevant ADR (see `ARCHITECTURAL_DECISIONS.md` approval checklist) and decisions
 D1–D8. The baseline documents `docs/HLD.md`, `docs/LLD.md`, `docs/ERD.md` describe the **current** system
 and were deliberately not rewritten; the evolution documents describe the **proposed** target.
+
+---
+
+## 13. Session 5 — Operonix 2.0 P0-1…P0-3 (IMPLEMENTED, VERIFIED, STOPPED)
+
+**Authorization:** foundation only. P1a (money-model refactor, tax profiles, costing), P1b, P2 (BI),
+P3 (Operonix AI) are **not started** and must not start without explicit owner approval.
+
+### 13.1 What P0 delivered
+
+| Item | State | Evidence |
+| --- | --- | --- |
+| Industry-neutral product foundation | ✅ | Cleaning-only copy/seed/branding removed; `IndustryTemplate` (10 profiles) drives vocabulary + default job title only |
+| Global brand + design system | ✅ | `Brand.tsx`, tokens in `index.css`/`tailwind.config.js`, rebuilt Layout/nav, auth shells, all list/detail pages restyled; `docs/DESIGN_SYSTEM.md` |
+| Reference data module | ✅ | `com.operonix.global` + `GET /api/v1/reference`; 20 countries, 15 currencies (with `minorUnits`), 10 industry templates |
+| Global tenant configuration | ✅ | `tenant.country_code/locale/industry_template/home_region/legal_name/tax_number/onboarded_at`; `PUT /workspace` extended |
+| Country-aware onboarding | ✅ | Two-step registration; country seeds currency + locale; timezone defaults to the browser zone; legal/tax optional, label from the country (`GSTIN`, `EIN`, …) |
+| Locale/currency formatting | ✅ | `lib/format.ts` is the only formatter; `JPY` renders 0 decimals from `minorUnits` |
+| i18n scaffolding | ✅ | `i18n/messages.ts` + `I18nProvider`; chrome/nav/auth/onboarding catalogued, per-key English fallback |
+| Multi-workspace identity | ✅ | Per-workspace email uniqueness; `400 WORKSPACE_REQUIRED` with candidate list; client workspace picker |
+| Refresh-token families | ✅ | `family_id`, `replaced_by`, `user_agent`; reuse revokes the family and audits `REFRESH_TOKEN_REUSE` |
+| Shared rate limiting | ✅ | `rate_limit_counter` + atomic upsert in `AuthRateLimiter` (login/register/refresh) |
+| Migration | ✅ | `V2__global_foundation.sql` — additive, backfills `country_code` from the existing currency and `family_id` from the token id |
+
+### 13.2 Verification (session 5, actually executed)
+
+| Check | Result |
+| --- | --- |
+| `mvn test` (backend, embedded PostgreSQL + real Flyway) | **40 tests, 0 failures, BUILD SUCCESS** — `MoneyCalculatorTest` 6, `SpaHostingIT` 7, `WebStaticConfigTest` 4, `GlobalFoundationIT` 10, `AuthFlowIT` 11, `SalesFlowIT` 2 |
+| `npm run typecheck` | passes (`tsc --noEmit`) |
+| `npm run build` | passes — `dist/assets/index-*.css` 34.79 kB, `index-*.js` 398.02 kB (gzip 109.84 kB) |
+| V2 on a **populated V1 database** | live dev DB: `Successfully applied 1 migration` at startup, health `200` |
+| Live registration + onboarding (browser, 1440×900) | country `India` seeded `INR` + `en-IN`, timezone `Asia/Calcutta`; workspace created; dashboard renders `₹0.00` |
+| Live workspace settings | GSTIN label from country, "Optional" helper text, language `English (India)`, security-posture panel |
+| Live full lifecycle (`scripts/smoke.mjs` against :8080) | **SEED OK** — quote 360 − 20 discount + 8.25% tax → job → invoice 319.34 → partial 100 → balance 219.34 → PAID balance 0 → dashboard 319.34 → audit trail → cross-tenant 404 → anonymous 401 |
+| Industry-neutrality audit | `grep -riE "clean(er|ing)?"` over `frontend/src`, `frontend/index.html`, `backend/src/main`: only the `CLEANING` template, the address-sanitising helper `cleanAddress`, and the AuthShell sentence that lists several trades as examples |
+| Screenshots | `docs/screenshots/{dashboard,quotations,settings}.png` (pre-restyle) + `register-global.png`, `register-india-defaults.png`, `dashboard-empty-global.png`, `settings-global.png`, `customers-empty-global.png` |
+
+Two defects were found and fixed during the session (both caught by tests, not by inspection):
+1. a rate-limit configuration key that did not match its properties record;
+2. nullable JPQL list filters that fail on PostgreSQL — list filtering now uses type-safe Specifications.
+
+### 13.3 Files created / modified in session 5
+
+**Backend — new**
+- `global/{Country,CountryRepository,Currency,CurrencyRepository,IndustryTemplate,ReferenceDataController,ReferenceDataService,ReferenceDtos}.java`
+- `resources/db/migration/V2__global_foundation.sql`
+- `test/java/com/operonix/global/GlobalFoundationIT.java`
+
+**Backend — modified**
+- `identity/{AuthService,AppUserRepository,RefreshToken,RefreshTokenRepository,SessionRevocationService,TeamService}.java`
+- `identity/dto/{LoginRequest,RegisterRequest}.java`
+- `tenancy/{Tenant,TenantService,WorkspaceService}.java`, `tenancy/dto/{TenantSummary,UpdateWorkspaceRequest,WorkspaceResponse}.java`
+- `security/AuthRateLimiter.java`, `config/{SecurityConfig,OpenApiConfig}.java`, `common/error/ErrorCode.java`
+- `scheduling/JobService.java` (industry-driven default job title)
+
+**Frontend — new**
+- `components/Brand.tsx`, `i18n/{messages.ts,I18nProvider.tsx}`
+
+**Frontend — modified**
+- `index.html` (title/description/theme), `main.tsx`, `api/{client,endpoints,types}.ts`, `auth/{AuthProvider,RequireAuth}.tsx`,
+  `components/{AuthShell,Layout,JobDetail,JobDialog,ConvertQuoteDialog}.tsx`, `components/ui/{cn,misc}.tsx`,
+  `lib/format.ts`, `index.css`, `tailwind.config.js`, `vite.config.ts`
+- `pages/{Login,Register,Dashboard,Customers,CustomerDetail,Catalog,Quotes,Schedule,Invoices,Team,Settings}.tsx`
+
+**Docs**
+- New: `docs/DESIGN_SYSTEM.md`, `docs/FRONTEND_GLOBALIZATION.md`, `docs/INDUSTRY_NEUTRALITY.md`
+- Updated: `docs/HLD.md` §14, `docs/LLD.md` §4.1/§4.2/§9.1/§9.3/§11 + §17, `docs/ERD.md` §1/§3/§5/§7,
+  `README.md`, this file
+- Reference (unchanged): everything under `docs/product-evolution/`
+
+### 13.4 Deviations from the approved designs (P0)
+
+| Design intent | What shipped | Why |
+| --- | --- | --- |
+| `membership` table with one credential per person | per-workspace `app_user` rows, workspace-aware login | A membership table needs an identity/credential split that belongs with the P1a financial refactor; the shipped version already satisfies "one person, several workspaces" and is reversible |
+| `label_override` / terminology table | template supplies the default job title only | P0 forbids duplication; the lookup point exists in one place, ready for overrides |
+| Country-driven postal validation | regex stored, not enforced on addresses | Rejecting valid international formats before address redesign is riskier than deferring it |
+| Translated copy per locale | English catalogue + formatting localisation | Only English is reviewed and shippable; the mechanism is in place |
+| `tax_definition`/`tax_profile` tables | not created | That is P1a; P0 explicitly excludes the financial refactor |
+
+### 13.5 Known issues / pending
+
+- One `app_user` row per workspace membership (see the deviation above); no invitation flow yet.
+- `currency.minorUnits` reaches the client, but the backend `MoneyCalculator` still stores `numeric(12,2)`;
+  JPY therefore *displays* without decimals while storage remains 2-dp until the P1a refactor.
+- No automated browser suite; the UI was verified manually with screenshots plus the API smoke script.
+- Git baseline: commit `f4a3f3b` ("chore: baseline before Operonix 2.0 P0 implementation") on `master`.
+  The P0 work is **uncommitted** (61 changed/new paths) — commit it before starting P1a so the phase is
+  reviewable as one unit. CI has still never run (no remote push yet).
+- Nothing was deployed; no GCP resource, billing change or paid service was touched in this session.
+
+### 13.6 How to resume
+
+1. Read `memory.md` (this file), then `docs/HLD.md` §14, `docs/LLD.md` §17, `docs/ERD.md` §3, and
+   `docs/product-evolution/IMPLEMENTATION_ROADMAP.md`.
+2. **Stop at P0.** Wait for explicit approval of P1a and for owner decisions D1 (market order) and D2
+   (tax-inclusive default) before touching `MoneyCalculator` or tax data.
+3. To verify the current state from scratch:
+   ```bash
+   # backend tests (embedded PostgreSQL, no Docker needed)
+   cd backend && JAVA_HOME=../.tools/jdk-21.0.13+9 ../.tools/apache-maven-3.9.9/bin/mvn test   # 40 tests
+   # frontend
+   cd frontend && npm run typecheck && npm run build
+   # live
+   cd frontend && API_BASE=http://localhost:8080 node scripts/smoke.mjs
+   ```
+4. If you change a page's copy, keep industry-neutral vocabulary (see `docs/INDUSTRY_NEUTRALITY.md` §5).
+   If you add a country or currency, extend `V2`'s seed tables in a **new** migration (`V3__…`) — never edit
+   an applied migration.
+5. Before ending a session, update §12/§13 here with the stopping point and the exact next command.

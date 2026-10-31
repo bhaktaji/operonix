@@ -14,6 +14,47 @@ export interface TenantSummary {
   slug: string;
   currency: string;
   timezone: string;
+  /** ISO 3166-1 alpha-2 market. Drives defaults only, never business logic. */
+  countryCode: string;
+  /** BCP-47 tag used for locale-aware formatting. */
+  locale: string;
+  /** Industry template code; selects vocabulary, never behaviour. */
+  industryTemplate: string;
+  legalName?: string | null;
+}
+
+export interface Country {
+  code: string;
+  name: string;
+  defaultCurrency: string;
+  defaultLocale: string;
+  callingCode: string;
+  taxLabel?: string | null;
+}
+
+export interface Currency {
+  code: string;
+  name: string;
+  symbol: string;
+  minorUnits: number;
+}
+
+export interface IndustryTemplate {
+  code: string;
+  label: string;
+  description: string;
+}
+
+export interface ReferenceData {
+  countries: Country[];
+  currencies: Currency[];
+  industryTemplates: IndustryTemplate[];
+}
+
+export interface WorkspaceOption {
+  slug: string;
+  name: string;
+  role: Role;
 }
 
 export interface AuthResponse {
@@ -272,9 +313,39 @@ export interface Workspace {
   id: string;
   name: string;
   slug: string;
+  countryCode: string;
   currency: string;
   timezone: string;
+  locale: string;
+  industryTemplate: string;
+  legalName?: string | null;
+  taxNumber?: string | null;
+  onboardedAt?: string | null;
   users: number;
+}
+
+export interface WorkspaceInput {
+  name: string;
+  countryCode: string;
+  currency: string;
+  timezone: string;
+  locale: string;
+  industryTemplate: string;
+  legalName?: string | null;
+  taxNumber?: string | null;
+}
+
+export interface RegisterInput {
+  orgName: string;
+  fullName: string;
+  email: string;
+  password: string;
+  countryCode?: string;
+  currency?: string;
+  timezone?: string;
+  locale?: string;
+  industryTemplate?: string;
+  legalName?: string;
 }
 
 export interface AuditEvent {

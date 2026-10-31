@@ -61,8 +61,9 @@ public class TeamService {
             throw ApiException.validation("role", "an additional OWNER cannot be created through the API");
         }
         String email = request.email().trim().toLowerCase(Locale.ROOT);
-        if (users.existsByEmail(email)) {
-            throw ApiException.of(ErrorCode.EMAIL_ALREADY_EXISTS, "An account with this email already exists");
+        if (users.existsByTenantIdAndEmail(currentUser.tenantId(), email)) {
+            throw ApiException.of(ErrorCode.EMAIL_ALREADY_EXISTS,
+                    "A teammate with this email already exists in this workspace");
         }
         AppUser user = new AppUser();
         user.setTenantId(currentUser.tenantId());

@@ -90,11 +90,11 @@ export function Pagination({
 
 const statTones: Record<Tone, string> = {
   neutral: "bg-sand-100 text-ink-600",
-  success: "bg-brand-50 text-brand-600",
+  success: "bg-mint-50 text-mint-600",
   warning: "bg-amber-50 text-amber-600",
   danger: "bg-rose-50 text-rose-600",
-  info: "bg-sky-50 text-sky-600",
-  brand: "bg-ink-900 text-white",
+  info: "bg-brand-50 text-brand-600",
+  brand: "bg-ink-950 text-white",
 };
 
 export function StatCard({
@@ -142,7 +142,7 @@ export function DeltaHint({ delta }: { delta: number | null | undefined }) {
   }
   const positive = delta >= 0;
   return (
-    <span className={positive ? "font-medium text-brand-600" : "font-medium text-rose-600"}>
+    <span className={positive ? "font-medium text-mint-600" : "font-medium text-rose-600"}>
       {positive ? "▲" : "▼"} {Math.abs(delta).toFixed(1)}% vs last month
     </span>
   );

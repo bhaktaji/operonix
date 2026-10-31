@@ -11,6 +11,10 @@ import lombok.Setter;
 import java.time.Instant;
 import java.util.UUID;
 
+/**
+ * One link in a rotating refresh-token chain. Every rotation stays in the same {@code familyId}, so a
+ * replayed token can revoke exactly the compromised session instead of every session the user owns.
+ */
 @Entity
 @Table(name = "refresh_token")
 @Getter
@@ -29,4 +33,13 @@ public class RefreshToken extends BaseEntity {
 
     @Column(name = "revoked_at")
     private Instant revokedAt;
+
+    @Column(name = "family_id", nullable = false)
+    private UUID familyId;
+
+    @Column(name = "replaced_by")
+    private UUID replacedBy;
+
+    @Column(name = "user_agent", length = 200)
+    private String userAgent;
 }

@@ -7,14 +7,18 @@ export class ApiError extends Error {
   readonly status: number;
   readonly code: string;
   readonly fieldErrors: { field: string; message: string }[];
+  /** Extra problem-detail properties (e.g. the workspace list when a sign-in needs one). */
+  readonly properties: Record<string, unknown>;
 
   constructor(status: number, code: string, message: string,
-              fieldErrors: { field: string; message: string }[] = []) {
+              fieldErrors: { field: string; message: string }[] = [],
+              properties: Record<string, unknown> = {}) {
     super(message);
     this.name = "ApiError";
     this.status = status;
     this.code = code;
     this.fieldErrors = fieldErrors;
+    this.properties = properties;
   }
 }
 
@@ -84,23 +88,25 @@ async function toApiError(response: Response): Promise<ApiError> {
   let code = "INTERNAL_ERROR";
   let message = `Request failed (${response.status})`;
   let fieldErrors: ApiError["fieldErrors"] = [];
+  let properties: Record<string, unknown> = {};
   try {
     const body = (await response.json()) as {
       code?: string;
       detail?: string;
       title?: string;
       errors?: { field: string; message: string }[];
-    };
+    } & Record<string, unknown>;
     code = body.code ?? code;
     message = body.detail ?? body.title ?? message;
     fieldErrors = body.errors ?? [];
+    properties = body;
   } catch {
     // Non-JSON error body: usually the dev proxy or a gateway when the API is down.
     if (response.status >= 500) {
       message = "The Operonix API is unavailable. Check that the backend is running.";
     }
   }
-  return new ApiError(response.status, code, message, fieldErrors);
+  return new ApiError(response.status, code, message, fieldErrors, properties);
 }
 
 export async function request<T>(path: string, init: RequestInit = {}, retry = true): Promise<T> {

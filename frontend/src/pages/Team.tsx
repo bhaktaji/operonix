@@ -68,7 +68,7 @@ export function Team() {
   return (
     <div className="animate-fade-up">
       <PageHeader
-        kicker="People"
+        kicker="Business"
         title="Team"
         description="Owners and admins manage access; technicians see only their assigned work."
         actions={
@@ -93,7 +93,7 @@ export function Team() {
             {Array.from({ length: 4 }).map((_, index) => <Skeleton key={index} className="h-14 w-full" />)}
           </div>
         ) : (team.data?.length ?? 0) === 0 ? (
-          <EmptyState icon={<UserCog className="h-5 w-5" />} title="No team members" description="Invite your first technician." />
+          <EmptyState icon={<UserCog className="h-5 w-5" />} title="No team members yet" description="Add the people who deliver the work, then assign them to jobs." />
         ) : (
           <div className="overflow-x-auto">
             <table className="w-full min-w-[720px] border-collapse">

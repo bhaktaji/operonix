@@ -13,6 +13,7 @@ import com.operonix.customer.ServiceLocation;
 import com.operonix.customer.dto.CustomerDtos;
 import com.operonix.document.DocumentNumberService;
 import com.operonix.document.DocumentType;
+import com.operonix.global.IndustryTemplate;
 import com.operonix.identity.AppUser;
 import com.operonix.identity.AppUserRepository;
 import com.operonix.identity.Role;
@@ -233,7 +234,7 @@ public class JobService {
 
         job.setCustomerId(customer.getId());
         job.setLocationId(location.getId());
-        job.setTitle(defaultTitle(request.title(), customer));
+        job.setTitle(defaultTitle(request.title(), customer, tenants.require(tenantId)));
         job.setScheduledStart(request.scheduledStart());
         job.setScheduledEnd(request.scheduledEnd());
         job.setNotes(trimToNull(request.notes()));
@@ -402,7 +403,7 @@ public class JobService {
         job.setCustomerId(customer.getId());
         job.setLocationId(location.getId());
         job.setQuoteId(quoteId);
-        job.setTitle(defaultTitle(title, customer));
+        job.setTitle(defaultTitle(title, customer, tenant));
         job.setScheduledStart(start);
         job.setScheduledEnd(end);
         job.setStatus(JobStatus.SCHEDULED);
@@ -415,8 +416,16 @@ public class JobService {
         return job;
     }
 
-    private String defaultTitle(String title, Customer customer) {
-        String base = title == null || title.isBlank() ? "Cleaning service — " + customer.getName() : title.trim();
+    /** Falls back to the workspace's industry vocabulary instead of a hardcoded trade name. */
+    private String defaultTitle(String title, Customer customer, Tenant tenant) {
+        String base;
+        if (title != null && !title.isBlank()) {
+            base = title.trim();
+        } else {
+            IndustryTemplate template = IndustryTemplate.from(tenant.getIndustryTemplate());
+            String label = template == null ? "Service" : template.defaultJobTitle();
+            base = label + " — " + customer.getName();
+        }
         return base.length() > 160 ? base.substring(0, 160) : base;
     }
 

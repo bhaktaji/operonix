@@ -399,3 +399,69 @@ flowchart LR
 - Any implementation decision that deviates from these documents must be recorded in
   `memory.md` → "Deviations" **and** reflected back into the affected document in the same change.
 - `memory.md` is the single source of truth for project state between sessions.
+
+---
+
+## 14. Operonix 2.0 — global foundation (P0, implemented)
+
+Operonix is a **global business operating platform for small and growing businesses**, not a vertical
+application. P0 replaced the cleaning-specific product framing with configuration-driven neutrality and
+added the minimum global machinery that every later phase depends on. Target design and rationale live
+in [product-evolution/](product-evolution/README.md); this section states what the code now does.
+
+### 14.1 Product position
+
+- Brand: **OPERONIX — The Operating Platform for Growing Businesses.** Neutral mark (a ring with a
+  ledger line), no industry imagery, one visual identity across every screen.
+- Vocabulary: customers, locations, catalog/services, quotations, jobs, team, invoices, payments,
+  business operations. Industry wording is a future per-template label override, never a second app.
+- Industry is data. `IndustryTemplate` (10 entries, default `GENERAL_SERVICE`) supplies labels and the
+  default job title; no service, calculator or state machine branches on it. See
+  [INDUSTRY_NEUTRALITY.md](INDUSTRY_NEUTRALITY.md).
+
+### 14.2 New building block: platform reference data
+
+A `global` module owns read-only platform tables (`country`, `currency`) and the `IndustryTemplate`
+enum, and exposes `GET /api/v1/reference` publicly so onboarding can offer real choices before a session
+exists. Registration, onboarding and workspace settings validate country, currency and industry through
+
+the same service, so an unsupported value can never become tenants' permanent configuration.
+
+### 14.3 Tenant regional configuration
+
+`tenant` now carries `country_code`, `locale`, `industry_template`, `home_region`, optional `legal_name`
+and `tax_number`, and `onboarded_at`. Currency is validated against the `currency` table instead of a
+six-value list. **Defaults are derived, behaviour is not:** a country maps to a currency and locale that
+the user reviews and may change. Legal and tax identifiers are optional everywhere — many markets have
+no equivalent — and the field label comes from `country.tax_label`. Issued quotations and invoices keep
+their monetary snapshots; changing workspace settings never rewrites history.
+
+### 14.4 Identity: one person, several workspaces
+
+Email uniqueness moved from global to per workspace (`uq_app_user_tenant_email`), keeping one row per
+membership. Sign-in resolves the membership from the email; when several exist, the API answers
+`400 WORKSPACE_REQUIRED` with the candidate workspaces, and the client completes sign-in with an
+explicit workspace slug. Every issued JWT still carries exactly one `tid` and one role, so all existing
+tenant-isolation guarantees are unchanged. A dedicated `membership` table remains the P1 target.
+
+### 14.5 Authentication hardening
+
+- Refresh tokens are rotated on every use, grouped into a `family_id` chain with `replaced_by`.
+  Presenting an already-rotated token revokes the entire family (reuse detection), is audited as
+  `REFRESH_TOKEN_REUSE`, and forces a fresh sign-in for that chain only.
+- Rate limiting for login, registration and refresh moved from a per-process `ConcurrentHashMap` to a
+  shared PostgreSQL fixed-window counter (`rate_limit_counter`), so the limit holds across Cloud Run
+  replicas rather than multiplying with them.
+
+### 14.6 Deployment compatibility
+
+The added state is ordinary PostgreSQL — Cloud SQL compatible, Flyway-managed, no new infrastructure
+dependency, no local filesystem use, no cross-instance sticky session. `rate_limit_counter` is the only
+new write-heavy table and is pruned opportunistically. Cloud Run, Cloud Build, Secret Manager and
+Artifact Registry assumptions in [GOOGLE_CLOUD_DEPLOYMENT.md](GOOGLE_CLOUD_DEPLOYMENT.md) still hold.
+
+### 14.7 Workflows unchanged
+
+The quote → job → schedule → invoice → payment lifecycle, discount and tax arithmetic, document
+numbering, roles, audit logging and reporting are untouched by P0. Only vocabulary, onboarding and the
+identity/auth mechanics changed, and the existing integration suites still cover those flows.

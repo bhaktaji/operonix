@@ -66,8 +66,8 @@ function RevenueChart({ buckets, currency }: { buckets: Bucket[]; currency: stri
              aria-label="Revenue collected over the last 14 days">
           <defs>
             <linearGradient id="revenueFill" x1="0" y1="0" x2="0" y2="1">
-              <stop offset="0%" stopColor="#35c29d" stopOpacity="0.28" />
-              <stop offset="100%" stopColor="#35c29d" stopOpacity="0.02" />
+              <stop offset="0%" stopColor="#5b63ec" stopOpacity="0.24" />
+              <stop offset="100%" stopColor="#5b63ec" stopOpacity="0.02" />
             </linearGradient>
           </defs>
           {[0.25, 0.5, 0.75].map((fraction) => (
@@ -77,14 +77,14 @@ function RevenueChart({ buckets, currency }: { buckets: Bucket[]; currency: stri
               x2={width - padding}
               y1={height - padding - fraction * (height - padding * 2 - 20)}
               y2={height - padding - fraction * (height - padding * 2 - 20)}
-              stroke="#eae6da"
+              stroke="#e8ecf3"
               strokeDasharray="3 4"
             />
           ))}
           <path d={area} fill="url(#revenueFill)" />
-          <polyline points={line} fill="none" stroke="#12a385" strokeWidth="2.2" strokeLinejoin="round" strokeLinecap="round" />
+          <polyline points={line} fill="none" stroke="#5b63ec" strokeWidth="2.2" strokeLinejoin="round" strokeLinecap="round" />
           {points.map((point) => (
-            <circle key={point.bucket.key} cx={point.x} cy={point.y} r="2.4" fill="#0a685b">
+            <circle key={point.bucket.key} cx={point.x} cy={point.y} r="2.4" fill="#3a3bab">
               <title>{`${point.bucket.label}: ${formatMoney(point.bucket.revenue, currency)}`}</title>
             </circle>
           ))}
@@ -151,13 +151,13 @@ export function Dashboard() {
         kicker="Overview"
         title={`${greeting()}, ${user?.fullName?.split(" ")[0] ?? "there"}`}
         description={isField
-          ? "Your jobs and schedule for today."
-          : "Here’s how the business is running this month."}
+          ? "Your assigned work and schedule for today."
+          : "A live view of revenue, collections and the work ahead."}
         actions={
           !isField ? (
             <>
               <Link to="/quotes/new">
-                <Button variant="outline" icon={<Plus className="h-4 w-4" />}>New quote</Button>
+                <Button variant="outline" icon={<Plus className="h-4 w-4" />}>New quotation</Button>
               </Link>
               <Link to="/schedule">
                 <Button variant="secondary" icon={<CalendarDays className="h-4 w-4" />}>Schedule a job</Button>
@@ -203,7 +203,7 @@ export function Dashboard() {
         <StatCard
           label={isField ? "Jobs this week" : "Active customers"}
           value={loading ? "—" : String(isField ? data?.jobsThisWeek ?? 0 : data?.activeCustomers ?? 0)}
-          hint={isField ? "Across all assigned work" : "Receiving service right now"}
+          hint={isField ? "Across all assigned work" : "Active and recently active accounts"}
           icon={isField ? <Clock className="h-4 w-4" /> : <Users className="h-4 w-4" />}
           tone="neutral"
           loading={loading}
@@ -229,7 +229,7 @@ export function Dashboard() {
         <div className={isField ? "xl:col-span-3 grid gap-4 lg:grid-cols-2" : "flex flex-col gap-4"}>
           {!isField && (
             <Card className="p-5">
-              <h2 className="font-display text-[15px] font-semibold text-ink-900">Quote pipeline</h2>
+              <h2 className="font-display text-[15px] font-semibold text-ink-900">Quotation pipeline</h2>
               <div className="mt-4 space-y-3">
                 <div className="flex items-baseline justify-between">
                   <span className="text-[13px] text-ink-500">Awaiting a decision</span>
@@ -253,7 +253,7 @@ export function Dashboard() {
                   to="/quotes"
                   className="inline-flex items-center gap-1 pt-1 text-[13px] font-medium text-brand-700 hover:text-brand-800"
                 >
-                  Go to quotes <ArrowUpRight className="h-3.5 w-3.5" />
+                  Go to quotations <ArrowUpRight className="h-3.5 w-3.5" />
                 </Link>
               </div>
             </Card>
@@ -279,7 +279,7 @@ export function Dashboard() {
                         </div>
                         <div className="mt-1.5 h-1.5 overflow-hidden rounded-full bg-sand-100">
                           <div
-                            className="h-full rounded-full bg-amber-400"
+                            className="h-full rounded-full bg-brand-300"
                             style={{ width: `${Math.max(6, (service.revenue / max) * 100)}%` }}
                           />
                         </div>
@@ -295,8 +295,8 @@ export function Dashboard() {
 
       <SectionCard
         className="mt-4"
-        title="Upcoming jobs"
-        description="Next visits across the crew"
+        title="Upcoming work"
+        description="The next scheduled jobs across the team"
         actions={
           <Link to="/schedule" className="inline-flex items-center gap-1 text-[13px] font-medium text-brand-700 hover:text-brand-800">
             Full schedule <ArrowUpRight className="h-3.5 w-3.5" />
@@ -312,8 +312,8 @@ export function Dashboard() {
         ) : (data?.upcomingJobs.length ?? 0) === 0 ? (
           <EmptyState
             icon={<Sparkles className="h-5 w-5" />}
-            title="The calendar is clear"
-            description="Schedule a job or convert an accepted quote to fill the week."
+            title="Nothing scheduled yet"
+            description="Create a job directly, or convert an accepted quotation into scheduled work."
             action={
               <Link to="/schedule">
                 <Button variant="secondary" size="sm" icon={<CalendarDays className="h-3.5 w-3.5" />}>

@@ -6,10 +6,18 @@
   html {
     -webkit-font-smoothing: antialiased;
     text-rendering: optimizeLegibility;
+    scroll-behavior: smooth;
   }
 
   body {
     @apply bg-sand-100 font-sans text-ink-900;
+    font-feature-settings: "cv11", "ss01";
+  }
+
+  h1,
+  h2,
+  h3 {
+    @apply text-ink-950;
   }
 
   ::selection {
@@ -62,20 +70,31 @@
   }
 
   .nav-link {
-    @apply flex items-center gap-3 rounded-lg px-3 py-2 text-sm font-medium text-ink-400 transition hover:bg-white/5 hover:text-white;
+    @apply flex items-center gap-3 rounded-lg px-3 py-2 text-[13.5px] font-medium text-ink-300 transition hover:bg-white/[0.06] hover:text-white;
   }
 
   .nav-link-active {
-    @apply bg-white/10 text-white;
+    @apply bg-white/[0.1] text-white shadow-[inset_0_0_0_1px_rgba(255,255,255,0.06)];
   }
 
   .kicker {
     @apply text-[11px] font-semibold uppercase tracking-[0.18em] text-ink-400;
+  }
+
+  .surface-muted {
+    @apply rounded-xl border border-sand-200 bg-sand-50;
   }
 }
 
 @layer utilities {
   .text-balance {
     text-wrap: balance;
+  }
+
+  .grid-lines {
+    background-image:
+      linear-gradient(to right, rgba(255, 255, 255, 0.05) 1px, transparent 1px),
+      linear-gradient(to bottom, rgba(255, 255, 255, 0.05) 1px, transparent 1px);
+    background-size: 64px 64px;
   }
 }

@@ -62,6 +62,10 @@ public class SecurityConfig {
                 .authorizeHttpRequests(auth -> {
                     auth.requestMatchers(HttpMethod.POST, "/api/v1/auth/register", "/api/v1/auth/login",
                             "/api/v1/auth/refresh").permitAll();
+                    // Platform reference data (countries, currencies, industry templates) is public by
+                    // design: onboarding needs it before the caller has a session and it holds no
+                    // tenant data.
+                    auth.requestMatchers(HttpMethod.GET, "/api/v1/reference").permitAll();
                     auth.requestMatchers("/actuator/health", "/actuator/health/**", "/actuator/info").permitAll();
                     if (properties.apiDocs().enabled()) {
                         auth.requestMatchers("/v3/api-docs/**", "/swagger-ui/**", "/swagger-ui.html").permitAll();

@@ -2,14 +2,14 @@ import { createContext, useCallback, useContext, useEffect, useMemo, useState } 
 import type { ReactNode } from "react";
 import { authApi } from "@/api/endpoints";
 import { ApiError, refreshSession, subscribeSession, tokens } from "@/api/client";
-import type { Role, TenantSummary, UserSummary } from "@/api/types";
+import type { RegisterInput, Role, TenantSummary, UserSummary } from "@/api/types";
 
 interface AuthContextValue {
   status: "loading" | "ready";
   user: UserSummary | null;
   tenant: TenantSummary | null;
-  login: (email: string, password: string) => Promise<void>;
-  register: (input: { orgName: string; fullName: string; email: string; password: string }) => Promise<void>;
+  login: (email: string, password: string, workspace?: string) => Promise<void>;
+  register: (input: RegisterInput) => Promise<void>;
   logout: () => Promise<void>;
   hasRole: (...roles: Role[]) => boolean;
 }
@@ -60,14 +60,14 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     };
   }, []);
 
-  const login = useCallback(async (email: string, password: string) => {
-    const session = await authApi.login(email, password);
+  const login = useCallback(async (email: string, password: string, workspace?: string) => {
+    const session = await authApi.login(email, password, workspace);
     tokens.set(session);
     setUser(session.user);
     setTenant(session.tenant);
   }, []);
 
-  const register = useCallback(async (input: { orgName: string; fullName: string; email: string; password: string }) => {
+  const register = useCallback(async (input: RegisterInput) => {
     const session = await authApi.register(input);
     tokens.set(session);
     setUser(session.user);

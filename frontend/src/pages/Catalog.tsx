@@ -81,8 +81,8 @@ export function Catalog() {
   return (
     <div className="animate-fade-up">
       <PageHeader
-        kicker="Pricing"
-        title="Service catalog"
+        kicker="Business"
+        title="Catalog"
         description="The priced building blocks for quotes and invoices. Deactivate instead of deleting."
         actions={canManage ? (
           <Button
@@ -109,7 +109,7 @@ export function Catalog() {
           <EmptyState
             icon={<Sparkles className="h-5 w-5" />}
             title="No services yet"
-            description="Add your standard cleans and rates so quoting takes seconds."
+            description="Add the services you sell and their rates, so quoting takes seconds."
             action={canManage ? (
               <Button variant="secondary" icon={<Plus className="h-4 w-4" />} onClick={() => setDialogOpen(true)}>
                 New service
@@ -191,7 +191,7 @@ export function Catalog() {
               maxLength={120}
               value={form.name}
               onChange={(event) => setForm({ ...form, name: event.target.value })}
-              placeholder="Deep clean — 2 bed apartment"
+              placeholder="Standard service — 2 hour visit"
             />
           </Field>
 

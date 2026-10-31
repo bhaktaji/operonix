@@ -25,6 +25,12 @@ public class SessionRevocationService {
         return repository.revokeAllForUser(userId, now);
     }
 
+    /** Revokes one rotation chain only: the compromised session, not every session the user owns. */
+    @Transactional(propagation = Propagation.REQUIRES_NEW)
+    public int revokeFamily(UUID familyId, Instant now) {
+        return repository.revokeFamily(familyId, now);
+    }
+
     @Transactional(propagation = Propagation.REQUIRES_NEW)
     public void revokeHash(String tokenHash, Instant now) {
         repository.findByTokenHash(tokenHash).ifPresent(token -> {

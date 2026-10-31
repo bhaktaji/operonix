@@ -34,9 +34,9 @@ export function Customers() {
   return (
     <div className="animate-fade-up">
       <PageHeader
-        kicker="Clients"
+        kicker="Operations"
         title="Customers"
-        description="The homes and businesses you clean — with contacts, locations and history."
+        description="Every business and household you serve — contacts, service locations and full history in one place."
         actions={
           <Button variant="secondary" icon={<Plus className="h-4 w-4" />} onClick={() => setDialogOpen(true)}>
             New customer

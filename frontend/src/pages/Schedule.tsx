@@ -103,7 +103,7 @@ export function Schedule() {
     <div className="animate-fade-up">
       <PageHeader
         kicker="Operations"
-        title="Schedule"
+        title="Scheduling"
         description="The week at a glance — assign crews, start visits, and keep every address covered."
         actions={
           canManage ? (

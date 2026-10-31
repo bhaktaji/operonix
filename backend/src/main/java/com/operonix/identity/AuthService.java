@@ -9,6 +9,7 @@ import com.operonix.identity.dto.LoginRequest;
 import com.operonix.identity.dto.MeResponse;
 import com.operonix.identity.dto.RegisterRequest;
 import com.operonix.identity.dto.UserSummary;
+import com.operonix.global.IndustryTemplate;
 import com.operonix.security.AuthenticatedUser;
 import com.operonix.security.CurrentUser;
 import com.operonix.security.JwtService;
@@ -28,10 +29,14 @@ import java.security.NoSuchAlgorithmException;
 import java.security.SecureRandom;
 import java.time.Clock;
 import java.time.Instant;
+import java.util.ArrayList;
 import java.util.Base64;
 import java.util.HexFormat;
+import java.util.LinkedHashMap;
+import java.util.List;
 import java.util.Locale;
 import java.util.Map;
+import java.util.Optional;
 import java.util.UUID;
 
 @Service
@@ -39,6 +44,8 @@ public class AuthService {
 
     private static final Logger log = LoggerFactory.getLogger(AuthService.class);
     private static final int REFRESH_BYTES = 32;
+    /** Pre-2.0 clients do not send a country; they keep working against this market default. */
+    private static final String DEFAULT_COUNTRY = "US";
 
     private final AppUserRepository users;
     private final RefreshTokenRepository refreshTokens;
@@ -71,10 +78,25 @@ public class AuthService {
     @Transactional
     public AuthResponse register(RegisterRequest request) {
         String email = normaliseEmail(request.email());
-        if (users.existsByEmail(email)) {
-            throw ApiException.of(ErrorCode.EMAIL_ALREADY_EXISTS, "An account with this email already exists");
+        Tenant tenant = tenantService.provision(new TenantService.Provisioning(
+                request.orgName(),
+                request.countryCode() == null || request.countryCode().isBlank()
+                        ? DEFAULT_COUNTRY : request.countryCode(),
+                request.currency(),
+                request.timezone(),
+                request.locale(),
+                request.industryTemplate() == null || request.industryTemplate().isBlank()
+                        ? IndustryTemplate.GENERAL_SERVICE.name() : request.industryTemplate(),
+                null,
+                request.legalName(),
+                null));
+
+        // Email is unique per workspace, so the same person can own a second workspace later.
+        if (users.existsByTenantIdAndEmail(tenant.getId(), email)) {
+            throw ApiException.of(ErrorCode.EMAIL_ALREADY_EXISTS,
+                    "An account with this email already exists in this workspace");
         }
-        Tenant tenant = tenantService.provision(request.orgName());
+
         AppUser user = new AppUser();
         user.setTenantId(tenant.getId());
         user.setEmail(email);
@@ -89,39 +111,76 @@ public class AuthService {
         });
 
         audit.record(tenant.getId(), user.getId(), AuditAction.TENANT_CREATED, "tenant", tenant.getId(),
-                Map.of("name", tenant.getName(), "slug", tenant.getSlug()));
+                Map.of("name", tenant.getName(), "slug", tenant.getSlug(),
+                        "country", tenant.getCountryCode(), "currency", tenant.getCurrency(),
+                        "industryTemplate", tenant.getIndustryTemplate()));
         audit.record(tenant.getId(), user.getId(), AuditAction.USER_REGISTERED, "app_user", user.getId(),
                 Map.of("email", user.getEmail(), "role", user.getRole().name()));
 
-        Tokens tokens = issueTokens(user);
-        return response(tokens, user, tenant);
+        Issued issued = issueTokens(user, null);
+        return response(issued, user, tenant);
     }
 
     @Transactional
     public AuthResponse login(LoginRequest request) {
         String email = normaliseEmail(request.email());
-        AppUser user = users.findByEmail(email).orElse(null);
-        if (user == null) {
+        List<AppUser> candidates = users.findAllByEmail(email);
+        if (candidates.isEmpty()) {
             // Equalise timing so unknown emails are not distinguishable from wrong passwords.
             passwordEncoder.matches(request.password(), dummyHash);
             throw invalidCredentials();
         }
-        if (!passwordEncoder.matches(request.password(), user.getPasswordHash())) {
-            audit.recordFailure(user.getTenantId(), user.getId(), AuditAction.USER_LOGIN_FAILED,
-                    "app_user", user.getId(), Map.of("reason", "bad_credentials"));
+
+        // Verify the password against every membership before revealing anything about workspaces:
+        // a wrong password must never disclose which workspaces an email belongs to.
+        List<AppUser> verified = new ArrayList<>(candidates.size());
+        for (AppUser candidate : candidates) {
+            if (passwordEncoder.matches(request.password(), candidate.getPasswordHash())) {
+                verified.add(candidate);
+            }
+        }
+        if (verified.isEmpty()) {
+            AppUser first = candidates.get(0);
+            audit.recordFailure(first.getTenantId(), first.getId(), AuditAction.USER_LOGIN_FAILED,
+                    "app_user", first.getId(), Map.of("reason", "bad_credentials"));
             throw invalidCredentials();
         }
-        if (!user.isActive()) {
-            audit.recordFailure(user.getTenantId(), user.getId(), AuditAction.USER_LOGIN_FAILED,
-                    "app_user", user.getId(), Map.of("reason", "inactive"));
+
+        List<AppUser> active = verified.stream().filter(AppUser::isActive).toList();
+        if (active.isEmpty()) {
+            AppUser first = verified.get(0);
+            audit.recordFailure(first.getTenantId(), first.getId(), AuditAction.USER_LOGIN_FAILED,
+                    "app_user", first.getId(), Map.of("reason", "inactive"));
             throw invalidCredentials();
         }
+
+        AppUser user;
+        if (active.size() == 1) {
+            user = active.get(0);
+        } else {
+            String requested = request.workspace();
+            if (requested == null || requested.isBlank()) {
+                throw ApiException.of(ErrorCode.WORKSPACE_REQUIRED,
+                                "This email belongs to more than one workspace. Choose one to continue.")
+                        .withProperty("workspaces", workspaceChoices(active));
+            }
+            user = active.stream()
+                    .filter(candidate -> tenantSlug(candidate).equalsIgnoreCase(requested.trim()))
+                    .findFirst()
+                    .orElseThrow(() -> ApiException.of(ErrorCode.WORKSPACE_NOT_FOUND,
+                            "No workspace with that address is available for this account"));
+        }
+
         Tenant tenant = tenantService.require(user.getTenantId());
         user.setLastLoginAt(clock.instant());
 
-        audit.record(AuditAction.USER_LOGIN, "app_user", user.getId(), Map.of("email", user.getEmail()));
-        Tokens tokens = issueTokens(user);
-        return response(tokens, user, tenant);
+        TenantContext.runWith(tenant.getId(), () -> {
+            audit.record(AuditAction.USER_LOGIN, "app_user", user.getId(),
+                    Map.of("email", user.getEmail(), "workspace", tenant.getSlug()));
+            return null;
+        });
+        Issued issued = issueTokens(user, null);
+        return response(issued, user, tenant);
     }
 
     @Transactional
@@ -133,14 +192,15 @@ public class AuthService {
                         "The refresh token is invalid or has expired"));
 
         if (token.getRevokedAt() != null) {
-            // A revoked token was replayed: assume theft and terminate every session for the user.
-            sessionRevocation.revokeAll(token.getUserId(), now);
-            log.warn("Refresh token reuse detected for user {}; all sessions revoked", token.getUserId());
+            // A rotated token was replayed: the chain is compromised, so revoke that chain only.
+            int revoked = sessionRevocation.revokeFamily(token.getFamilyId(), now);
+            log.warn("Refresh token reuse detected for user {}; {} token(s) in family {} revoked",
+                    token.getUserId(), revoked, token.getFamilyId());
             throw ApiException.of(ErrorCode.REFRESH_TOKEN_REUSED,
                     "This session has been invalidated. Please sign in again.");
         }
         if (token.getExpiresAt().isBefore(now)) {
-            sessionRevocation.revokeHash(hash, now);
+            sessionRevocation.revokeFamily(token.getFamilyId(), now);
             throw ApiException.of(ErrorCode.REFRESH_TOKEN_INVALID, "The refresh token has expired");
         }
 
@@ -153,8 +213,9 @@ public class AuthService {
         Tenant tenant = tenantService.require(user.getTenantId());
 
         token.setRevokedAt(now);
-        Tokens tokens = issueTokens(user);
-        return response(tokens, user, tenant);
+        Issued issued = issueTokens(user, token.getFamilyId());
+        token.setReplacedBy(issued.refreshTokenId());
+        return response(issued, user, tenant);
     }
 
     @Transactional
@@ -163,6 +224,8 @@ public class AuthService {
         refreshTokens.findByTokenHash(sha256(rawToken)).ifPresent(token -> {
             if (token.getRevokedAt() == null) {
                 token.setRevokedAt(now);
+                // Ending a session ends the whole chain: the browser cannot rotate a superseded token.
+                sessionRevocation.revokeFamily(token.getFamilyId(), now);
             }
         });
     }
@@ -175,7 +238,26 @@ public class AuthService {
         return new MeResponse(UserSummary.from(user), tenantService.summary(principal.tenantId()));
     }
 
-    private Tokens issueTokens(AppUser user) {
+    private List<Map<String, String>> workspaceChoices(List<AppUser> memberships) {
+        List<Map<String, String>> choices = new ArrayList<>(memberships.size());
+        for (AppUser membership : memberships) {
+            Optional<Tenant> tenant = tenantService.find(membership.getTenantId());
+            tenant.ifPresent(value -> {
+                Map<String, String> choice = new LinkedHashMap<>();
+                choice.put("slug", value.getSlug());
+                choice.put("name", value.getName());
+                choice.put("role", membership.getRole().name());
+                choices.add(choice);
+            });
+        }
+        return choices;
+    }
+
+    private String tenantSlug(AppUser user) {
+        return tenantService.find(user.getTenantId()).map(Tenant::getSlug).orElse("");
+    }
+
+    private Issued issueTokens(AppUser user, UUID familyId) {
         AuthenticatedUser principal = new AuthenticatedUser(user.getId(), user.getTenantId(), user.getRole(),
                 user.getEmail(), user.getFullName());
         JwtService.IssuedToken access = jwtService.issue(principal);
@@ -184,17 +266,22 @@ public class AuthService {
         random.nextBytes(bytes);
         String rawRefresh = Base64.getUrlEncoder().withoutPadding().encodeToString(bytes);
 
+        // A brand-new session starts its own chain; a rotation continues the existing one. The family
+        // id must be set before the insert, because the id generator writes the row immediately.
+        UUID family = familyId == null ? UUID.randomUUID() : familyId;
+
         RefreshToken refreshToken = new RefreshToken();
         refreshToken.setUserId(user.getId());
         refreshToken.setTokenHash(sha256(rawRefresh));
         refreshToken.setExpiresAt(clock.instant().plus(jwtService.refreshTtl()));
+        refreshToken.setFamilyId(family);
         refreshTokens.save(refreshToken);
 
-        return new Tokens(access.value(), access.expiresInSeconds(), rawRefresh);
+        return new Issued(access.value(), access.expiresInSeconds(), rawRefresh, refreshToken.getId());
     }
 
-    private AuthResponse response(Tokens tokens, AppUser user, Tenant tenant) {
-        return new AuthResponse(tokens.accessToken(), tokens.expiresInSeconds(), tokens.refreshToken(),
+    private AuthResponse response(Issued issued, AppUser user, Tenant tenant) {
+        return new AuthResponse(issued.accessToken(), issued.expiresInSeconds(), issued.refreshToken(),
                 UserSummary.from(user), TenantSummary.from(tenant));
     }
 
@@ -215,6 +302,6 @@ public class AuthService {
         }
     }
 
-    private record Tokens(String accessToken, long expiresInSeconds, String refreshToken) {
+    private record Issued(String accessToken, long expiresInSeconds, String refreshToken, UUID refreshTokenId) {
     }
 }

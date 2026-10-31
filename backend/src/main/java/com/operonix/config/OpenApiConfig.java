@@ -17,8 +17,9 @@ public class OpenApiConfig {
                 .info(new Info()
                         .title("Operonix API")
                         .version("v1")
-                        .description("Multi-tenant vertical SaaS for cleaning businesses. "
-                                + "All endpoints require a bearer token except registration and login."))
+                        .description("Operonix — the operating platform for growing businesses. "
+                                + "Multi-tenant, industry-neutral, global-ready. All endpoints require a "
+                                + "bearer token except registration, login, refresh and public reference data."))
                 .addSecurityItem(new SecurityRequirement().addList("bearerAuth"))
                 .components(new Components().addSecuritySchemes("bearerAuth",
                         new SecurityScheme()

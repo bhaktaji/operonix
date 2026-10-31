@@ -18,6 +18,9 @@ Column names here are the physical names used by JPA entities and SQL migrations
 
 ```mermaid
 erDiagram
+    COUNTRY ||--o{ TENANT : "registers"
+    CURRENCY ||--o{ TENANT : "bills in"
+    COUNTRY }o--|| CURRENCY : "defaults to"
     TENANT ||--o{ APP_USER : "employs"
     TENANT ||--o{ CUSTOMER : "owns"
     TENANT ||--o{ SERVICE_ITEM : "defines"
@@ -55,15 +58,43 @@ erDiagram
         uuid id PK
         varchar name
         varchar slug UK
-        varchar currency
+        varchar currency FK
         varchar timezone
+        varchar country_code FK
+        varchar locale
+        varchar industry_template
+        varchar home_region
+        varchar legal_name
+        varchar tax_number
+        timestamptz onboarded_at
         timestamptz created_at
         bigint version
+    }
+    COUNTRY {
+        varchar code PK
+        varchar name
+        varchar default_currency FK
+        varchar default_locale
+        varchar calling_code
+        varchar tax_label
+        boolean active
+    }
+    CURRENCY {
+        varchar code PK
+        varchar name
+        varchar symbol
+        smallint minor_units
+        boolean active
+    }
+    RATE_LIMIT_COUNTER {
+        varchar bucket PK
+        timestamptz window_start PK
+        integer hits
     }
     APP_USER {
         uuid id PK
         uuid tenant_id FK
-        varchar email UK
+        varchar email
         varchar password_hash
         varchar full_name
         varchar role
@@ -74,6 +105,9 @@ erDiagram
         uuid id PK
         uuid user_id FK
         varchar token_hash UK
+        uuid family_id
+        uuid replaced_by FK
+        varchar user_agent
         timestamptz expires_at
         timestamptz revoked_at
     }
@@ -243,12 +277,20 @@ erDiagram
 | `id` | uuid | PK |
 | `name` | varchar(120) | NOT NULL, `ck_tenant_name_len` length between 2 and 120 |
 | `slug` | varchar(63) | NOT NULL, UNIQUE `uq_tenant_slug`, `ck_tenant_slug` matches `^[a-z0-9][a-z0-9-]{1,62}$` |
-| `currency` | varchar(3) | NOT NULL, `ck_tenant_currency` in (`USD`,`EUR`,`GBP`,`INR`,`AUD`,`CAD`) |
+| `currency` | varchar(3) | NOT NULL, FK `fk_tenant_currency` → `currency(code)` (V2 replaced `ck_tenant_currency`) |
 | `timezone` | varchar(64) | NOT NULL DEFAULT `UTC` |
+| `country_code` | varchar(2) | NOT NULL, FK → `country(code)` (V2) |
+| `locale` | varchar(16) | NOT NULL DEFAULT `en`, `ck_tenant_locale` matches `^[a-z]{2}(-[A-Z]{2})?$` |
+| `industry_template` | varchar(40) | NOT NULL DEFAULT `GENERAL_SERVICE`, `ck_tenant_industry` restricted to the template catalogue |
+| `home_region` | varchar(32) | NOT NULL DEFAULT `asia-south1` — data-residency region |
+| `legal_name` | varchar(160) | NULL — optional, never requested during onboarding |
+| `tax_number` | varchar(32) | NULL — optional; many countries have no equivalent identifier |
+| `onboarded_at` | timestamptz | NULL — set when regional setup is confirmed |
 | `created_at` / `updated_at` | timestamptz | NOT NULL |
 | `version` | bigint | NOT NULL DEFAULT 0 |
 
-Indexes: `uq_tenant_slug` (unique). Deletion: restricted while dependent rows exist.
+Indexes: `uq_tenant_slug` (unique), `ix_tenant_country (country_code)`.
+Deletion: restricted while dependent rows exist.
 
 ### 3.2 `app_user`
 
@@ -256,7 +298,7 @@ Indexes: `uq_tenant_slug` (unique). Deletion: restricted while dependent rows ex
 | --- | --- | --- |
 | `id` | uuid | PK |
 | `tenant_id` | uuid | NOT NULL FK → `tenant(id)` |
-| `email` | varchar(254) | NOT NULL, stored lowercase, UNIQUE `uq_app_user_email` (global identity) |
+| `email` | varchar(254) | NOT NULL, stored lowercase; unique **per workspace** via `uq_app_user_tenant_email (tenant_id, lower(email))` (V2 replaced the global `uq_app_user_email`) |
 | `password_hash` | varchar(100) | NOT NULL (BCrypt, strength 12) |
 | `full_name` | varchar(120) | NOT NULL |
 | `role` | varchar(20) | NOT NULL, `ck_app_user_role` in (`OWNER`,`ADMIN`,`MANAGER`,`TECHNICIAN`) |
@@ -265,8 +307,11 @@ Indexes: `uq_tenant_slug` (unique). Deletion: restricted while dependent rows ex
 | `created_at` / `updated_at` | timestamptz | NOT NULL |
 | `version` | bigint | NOT NULL DEFAULT 0 |
 
-Indexes: `uq_app_user_email`; `ix_app_user_tenant_role (tenant_id, role)`.
-v1 rule: exactly one tenant per user (documented limitation; a `membership` table is the v2 path).
+Indexes: `uq_app_user_tenant_email` (unique), `ix_app_user_email_lower (lower(email))` for sign-in
+resolution across workspaces, `ix_app_user_tenant_role (tenant_id, role)`.
+v1 rule: exactly one tenant per user. Since V2 the same email may exist in several workspaces (one row
+per membership); `POST /auth/login` requires the `workspace` slug when several match. A dedicated
+`membership` table remains the P1 target — see `docs/product-evolution/DATA_MODEL_IMPACT_ANALYSIS.md`.
 
 ### 3.3 `refresh_token`
 
@@ -275,12 +320,17 @@ v1 rule: exactly one tenant per user (documented limitation; a `membership` tabl
 | `id` | uuid | PK |
 | `user_id` | uuid | NOT NULL FK → `app_user(id)` ON DELETE CASCADE |
 | `token_hash` | varchar(64) | NOT NULL UNIQUE (SHA-256 hex of the opaque token) |
+| `family_id` | uuid | NOT NULL (V2) — every rotation of one login shares it |
+| `replaced_by` | uuid | NULL, FK → `refresh_token(id)` — next token in the chain |
+| `user_agent` | varchar(200) | NULL — session labelling in the client |
 | `expires_at` | timestamptz | NOT NULL |
 | `revoked_at` | timestamptz | NULL |
 | `created_at` | timestamptz | NOT NULL |
 
-Indexes: `uq_refresh_token_hash`; `ix_refresh_token_user_expiry (user_id, expires_at)`.
-Raw tokens are never stored; expired rows are pruned by a maintenance job (manual in v1).
+Indexes: `uq_refresh_token_hash`; `ix_refresh_token_user_expiry (user_id, expires_at)`;
+`ix_refresh_token_family (family_id)`; `ix_refresh_token_expiry (expires_at)`.
+Raw tokens are never stored. Reusing a rotated token revokes the whole family (reuse detection) and is
+audited as `REFRESH_TOKEN_REUSE`. Expired rows are pruned by a maintenance job (manual in v1).
 
 ### 3.4 `customer`
 
@@ -514,6 +564,48 @@ in application code).
 
 Accessed with `SELECT … FOR UPDATE` inside the inserting transaction (LLD §5.2).
 
+### 3.16 `country`
+
+| Column | Type | Constraints |
+| --- | --- | --- |
+| `code` | varchar(2) | PK, `ck_country_code` matches `^[A-Z]{2}$` |
+| `name` | varchar(80) | NOT NULL |
+| `default_currency` | varchar(3) | NOT NULL (logical FK to `currency`) |
+| `default_locale` | varchar(16) | NOT NULL, BCP-47 |
+| `calling_code` | varchar(8) | NOT NULL, e.g. `+91` |
+| `postal_code_regex` | varchar(160) | NULL — `NULL` means "do not validate locally yet" |
+| `tax_label` | varchar(40) | NULL — `GSTIN`, `EIN`, `VAT number`, `Invoice registration number`, … |
+| `active` | boolean | NOT NULL DEFAULT true |
+
+Seeded with 20 markets in `V2__global_foundation.sql`; India, US, UK and Japan are the deeper P0
+markets (currency, locale, tax label and postal pattern all present). Platform data, not tenant data:
+no `tenant_id`, readable by unauthenticated onboarding through `GET /api/v1/reference`.
+
+### 3.17 `currency`
+
+| Column | Type | Constraints |
+| --- | --- | --- |
+| `code` | varchar(3) | PK, `ck_currency_code` matches `^[A-Z]{3}$` |
+| `name` | varchar(64) | NOT NULL |
+| `symbol` | varchar(8) | NOT NULL |
+| `minor_units` | smallint | NOT NULL, `ck_currency_minor_units` between 0 and 4 |
+| `active` | boolean | NOT NULL DEFAULT true |
+
+`minor_units` is the authority for money display: `JPY` is 0, `KWD` would be 3. The client receives it
+through `/api/v1/reference` and formats from it rather than from a hardcoded table.
+
+### 3.18 `rate_limit_counter`
+
+| Column | Type | Constraints |
+| --- | --- | --- |
+| `bucket` | varchar(200) | PK part — already namespaced (`login:<ip>:<email>`, `refresh:<ip>`, `register:<ip>`) |
+| `window_start` | timestamptz | PK part — start of the fixed window |
+| `hits` | integer | NOT NULL, `ck_rate_limit_hits` > 0 |
+
+Index: `ix_rate_limit_window (window_start)` for pruning old windows. Shared by every Cloud Run
+instance, so the limit no longer multiplies with replica count. Contains no tenant data and no PII
+beyond a hashed/derived caller key.
+
 ---
 
 ## 4. Relationships and delete behaviour
@@ -542,7 +634,8 @@ check that the referenced row has the same `tenant_id`. Composite FKs and RLS ar
 
 | Query pattern | Index |
 | --- | --- |
-| Login by email | `uq_app_user_email` |
+| Sign-in resolution by email | `ix_app_user_email_lower` |
+| Membership uniqueness per workspace | `uq_app_user_tenant_email` |
 | Refresh validation + revoke-all | `uq_refresh_token_hash`, `ix_refresh_token_user_expiry` |
 | Customer list/search by tenant | `ix_customer_tenant_name`, `ix_customer_tenant_status` |
 | Today/range schedule, calendar | `ix_job_tenant_start` |
@@ -575,6 +668,13 @@ prefix keeps scans bounded. If a tenant grows beyond ~1M rows, add monthly parti
 V1 as implemented (15 tables): `tenant`, `app_user`, `refresh_token`, `customer`, `service_location`,
 `service_item`, `quote`, `quote_line`, `job`, `job_assignment`, `invoice`, `invoice_line`, `payment`,
 `audit_event`, `document_sequence`.
+
+V2 as implemented (3 new tables → 18 total): `country`, `currency`, `rate_limit_counter`
+(`V2__global_foundation.sql`). Purely additive apart from three justified replacements: the global
+`uq_app_user_email` unique constraint becomes the per-workspace `uq_app_user_tenant_email`, the
+`ck_tenant_currency` list becomes the `currency` FK, and `refresh_token` gains rotation columns that
+are backfilled (`family_id = id`) before being made `NOT NULL`. Existing rows keep their currency, and
+`tenant.country_code` is backfilled from it.
 
 - `V1__schema.sql` creates extensions-free schema (no `pgcrypto` dependency), all tables,
   constraints and indexes, plus the `document_sequence` table.

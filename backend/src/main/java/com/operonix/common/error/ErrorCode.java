@@ -10,6 +10,8 @@ public enum ErrorCode {
     INVALID_CREDENTIALS(HttpStatus.UNAUTHORIZED, "Invalid credentials"),
     REFRESH_TOKEN_INVALID(HttpStatus.UNAUTHORIZED, "Invalid refresh token"),
     REFRESH_TOKEN_REUSED(HttpStatus.UNAUTHORIZED, "Refresh token reuse detected"),
+    WORKSPACE_REQUIRED(HttpStatus.BAD_REQUEST, "Workspace selection required"),
+    WORKSPACE_NOT_FOUND(HttpStatus.NOT_FOUND, "Workspace not found for this account"),
     FORBIDDEN(HttpStatus.FORBIDDEN, "Access denied"),
     NOT_FOUND(HttpStatus.NOT_FOUND, "Resource not found"),
     CONFLICT(HttpStatus.CONFLICT, "Conflict"),

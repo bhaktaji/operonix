@@ -197,13 +197,13 @@ export function JobDialog({
           </Field>
         </div>
 
-        <Field label="Title" htmlFor="job-title" hint="Defaults to “Cleaning service — customer”">
+        <Field label="Title" htmlFor="job-title" hint="Leave blank to use your business type and the customer name">
           <Input
             id="job-title"
             value={title}
             maxLength={160}
             onChange={(event) => setTitle(event.target.value)}
-            placeholder="Weekly office clean"
+            placeholder="Weekly service visit"
           />
         </Field>
 
@@ -237,7 +237,7 @@ export function JobDialog({
           <p className="label">Assign technicians</p>
           {activeTeam.length === 0 ? (
             <p className="rounded-lg bg-amber-50 px-3 py-2 text-[12px] text-amber-700">
-              No active team members yet. You can schedule unassigned work and add the crew later.
+              No active team members yet. You can schedule unassigned work and assign the team later.
             </p>
           ) : (
             <div className="grid max-h-44 gap-1.5 overflow-y-auto rounded-lg border border-sand-200 p-2 sm:grid-cols-2">

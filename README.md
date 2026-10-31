@@ -1,13 +1,27 @@
 # Operonix
 
-Multi-tenant vertical SaaS for small service businesses. v1 serves **cleaning companies**: one
-workspace covers the whole lead-to-cash loop — customers and service locations → priced service
-catalogue → quotes → scheduled jobs with technicians → invoices, payments and reversals → owner
-dashboard and audit trail.
+**The Operating Platform for Growing Businesses.** Operonix is a multi-tenant, industry-independent
+business platform for small and growing service businesses anywhere in the world — cleaning and pest
+control crews, equipment rental desks, auto repair shops, plumbers and electricians, property
+maintenance teams, contractors, local logistics operators and training centres. One workspace covers
+the whole lead-to-cash loop: customers and locations → catalog → quotations → scheduled jobs → invoices,
+payments and reversals → dashboard, reporting and audit trail.
+
+Industry is configuration, not a code path: a workspace picks a template (`GENERAL_SERVICE`,
+`CLEANING`, `PEST_CONTROL`, `EQUIPMENT_RENTAL`, `AUTO_REPAIR`, `PLUMBING_ELECTRICAL`,
+`PROPERTY_MAINTENANCE`, `CONSTRUCTION`, `LOGISTICS`, `TRAINING`) that affects vocabulary and defaults,
+while the workflow, pricing and tax rules stay identical for every business. A workspace also carries
+its country, currency, locale, timezone and optional legal/tax details, so money and dates render
+correctly for its market — including zero-decimal currencies such as JPY.
 
 - Backend: Java 21, Spring Boot 3.3, Spring Security 6, Spring Data JPA, Flyway, PostgreSQL 16
 - Frontend: React 18 + TypeScript 5, Vite 5, React Router 6, TanStack Query 5, Tailwind CSS 3
 - Design documents: [HLD](docs/HLD.md), [LLD](docs/LLD.md), [ERD](docs/ERD.md)
+- Product evolution analysis (reference, not yet implemented beyond P0):
+  [docs/product-evolution/](docs/product-evolution/README.md)
+- Design system: [docs/DESIGN_SYSTEM.md](docs/DESIGN_SYSTEM.md) · Globalization:
+  [docs/FRONTEND_GLOBALIZATION.md](docs/FRONTEND_GLOBALIZATION.md) · Industry neutrality:
+  [docs/INDUSTRY_NEUTRALITY.md](docs/INDUSTRY_NEUTRALITY.md)
 - Session state and handover notes: [memory.md](memory.md)
 
 ## Quick start
@@ -26,7 +40,9 @@ npm install
 npm run dev
 ```
 
-Register the first workspace in the browser; the registering user becomes its `OWNER`.
+Register the first workspace in the browser; the registering user becomes its `OWNER`. Onboarding asks
+for business name, country, industry, currency, timezone and language — country selection seeds the rest,
+and legal/tax identifiers are optional and can be added later in workspace settings.
 
 ### Environment variables
 
@@ -108,7 +124,8 @@ Google Cloud project, billing and explicit approval; see the checklist for what 
 
 | Area | Capability |
 | --- | --- |
-| Workspace | Register a company, owner/admin team management, currency and timezone settings |
+| Workspace | Register a company with country, industry, currency, locale and timezone; owner/admin team management; regional settings with optional legal/tax details |
+| Platform | Public reference data (countries, currencies with minor-unit precision, industry templates) used by onboarding and settings |
 | Customers | Contacts, billing address, multiple service locations with access notes, archive/restore |
 | Catalogue | Priced services with unit, default duration and tax rate; deactivate instead of delete |
 | Quotes | Line items from the catalogue or ad-hoc, header discount, server-computed tax and totals, send/accept/decline/convert, expiry |
@@ -141,7 +158,12 @@ CI and in the container build. Nothing in the project requires pnpm/yarn.
 
 - Billing records payments; no card capture or payment-gateway integration.
 - No email/SMS delivery: "send" changes status and stamps the audit log.
-- One user belongs to one workspace (no cross-workspace membership or invitations).
+- One person may sign in to several workspaces, but each membership is a separate `app_user` row with
+  its own password; a shared-credential `membership` table is the next step. No invitations flow yet.
+- Only English UI copy is catalogued; `locale` currently localises formatting (money, numbers, dates),
+  not language. Per-industry terminology overrides are not implemented.
+- The default branch of both suites is v1's guarantee set plus the P0 global-foundation tests; there is
+  still no automated browser test suite.
 - No customer portal, attachments, route optimisation or SSO.
 - No automated browser tests; UI is verified manually and by type-check/build.
 - No payment gateway, no email/SMS delivery, no attachments (so Cloud Storage is not used yet).

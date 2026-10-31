@@ -209,7 +209,7 @@ export function JobDetail({
         </div>
 
         <div>
-          <p className="mb-2 text-[11px] font-semibold uppercase tracking-[0.12em] text-ink-400">Crew</p>
+          <p className="mb-2 text-[11px] font-semibold uppercase tracking-[0.12em] text-ink-400">Assigned team</p>
           {job.technicians.length === 0 ? (
             <p className="text-sm text-ink-400">Unassigned</p>
           ) : (

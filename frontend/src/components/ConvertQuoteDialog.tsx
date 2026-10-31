@@ -96,7 +96,7 @@ export function ConvertQuoteDialog({
       open={open}
       onClose={onClose}
       title="Schedule this quote"
-      description="Turn the accepted quote into a job and assign the crew. Schedule conflicts are checked before saving."
+      description="Turn the accepted quotation into scheduled work and assign the team. Schedule conflicts are checked before saving."
       footer={
         <>
           <Button variant="outline" type="button" onClick={onClose}>Cancel</Button>
@@ -115,7 +115,7 @@ export function ConvertQuoteDialog({
             value={title}
             maxLength={160}
             onChange={(event) => setTitle(event.target.value)}
-            placeholder="Weekly office clean"
+            placeholder="Weekly service visit"
           />
         </Field>
 

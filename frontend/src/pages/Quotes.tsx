@@ -35,12 +35,12 @@ export function Quotes() {
   return (
     <div className="animate-fade-up">
       <PageHeader
-        kicker="Sales"
-        title="Quotes"
-        description="Price the work, send it out, and turn accepted quotes into scheduled jobs."
+        kicker="Operations"
+        title="Quotations"
+        description="Price the work, send it to your customer, and turn accepted quotations into scheduled jobs."
         actions={
           <Link to="/quotes/new">
-            <Button variant="secondary" icon={<Plus className="h-4 w-4" />}>New quote</Button>
+            <Button variant="secondary" icon={<Plus className="h-4 w-4" />}>New quotation</Button>
           </Link>
         }
       />
@@ -54,8 +54,8 @@ export function Quotes() {
               setSearch(event.target.value);
               setPage(0);
             }}
-            placeholder="Search quote number"
-            aria-label="Search quotes"
+            placeholder="Search quotation number"
+            aria-label="Search quotations"
             className="pl-9"
           />
         </div>
@@ -90,7 +90,7 @@ export function Quotes() {
             description="Create a quote from your catalog in under a minute."
             action={
               <Link to="/quotes/new">
-                <Button variant="secondary" icon={<Plus className="h-4 w-4" />}>New quote</Button>
+                <Button variant="secondary" icon={<Plus className="h-4 w-4" />}>New quotation</Button>
               </Link>
             }
           />

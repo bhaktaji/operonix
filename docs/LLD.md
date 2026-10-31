@@ -159,8 +159,8 @@ Access token expiry returns `401` with `WWW-Authenticate: Bearer error="invalid_
 
 | Method | Path | Auth | Request | Response |
 | --- | --- | --- | --- | --- |
-| POST | `/register` | public | `{orgName, fullName, email, password}` | `201 AuthResponse` |
-| POST | `/login` | public | `{email, password}` | `200 AuthResponse` |
+| POST | `/register` | public | `{orgName, fullName, email, password, countryCode?, currency?, timezone?, locale?, industryTemplate?, legalName?}` | `201 AuthResponse` |
+| POST | `/login` | public | `{email, password, workspace?}` | `200 AuthResponse` or `400 WORKSPACE_REQUIRED` |
 | POST | `/refresh` | public (token) | `{refreshToken}` | `200 AuthResponse` (rotated) |
 | POST | `/logout` | bearer | `{refreshToken}` | `204` |
 | GET | `/me` | bearer | — | `200 MeResponse` |
@@ -171,22 +171,44 @@ Access token expiry returns `401` with `WWW-Authenticate: Bearer error="invalid_
   "accessToken": "eyJ…",
   "expiresIn": 900,
   "refreshToken": "6f3c…",          // returned once; stored client-side
-  "user": { "id": "…", "email": "owner@sparkleclean.com", "fullName": "Dana Reed",
+  "user": { "id": "…", "email": "owner@northwind.co", "fullName": "Dana Reed",
             "role": "OWNER", "tenantId": "…" },
-  "tenant": { "id": "…", "name": "Sparkle Clean", "slug": "sparkle-clean",
-              "currency": "USD", "timezone": "America/New_York" }
+  "tenant": { "id": "…", "name": "Northwind Field Services", "slug": "northwind-field-services",
+              "currency": "USD", "timezone": "America/New_York", "countryCode": "US",
+              "locale": "en-US", "industryTemplate": "GENERAL_SERVICE" }
 }
 ```
 
 `register` creates tenant + owner atomically and returns the same payload. Registration is rate
-limited per IP as well as login.
+limited per IP as well as login. `tenant.taxNumber` is deliberately excluded from every session
+payload; it is only readable through `GET /workspace` (owner/admin).
+
+**Global defaults.** Omitted regional fields are derived from `countryCode` (default `US`) using the
+`country` table: `currency` and `locale` come from the country row, `timezone` defaults to `UTC` when
+absent, `industryTemplate` to `GENERAL_SERVICE`. Explicit values are validated against the active
+`currency` and `country` tables; unknown codes return `400 VALIDATION_ERROR` naming the field.
+
+**Multi-workspace sign-in.** Email uniqueness is per workspace, so one address may map to several
+memberships. With exactly one match, login proceeds. With several and no `workspace` slug, the API
+returns:
+
+```jsonc
+// 400 WORKSPACE_REQUIRED
+{ "type": "about:blank", "title": "Workspace required", "status": 400,
+  "code": "WORKSPACE_REQUIRED",
+  "detail": "This email belongs to more than one workspace. Choose one to continue.",
+  "workspaces": [ { "slug": "northwind-field-services", "name": "Northwind Field Services" } ] }
+```
+
+The client re-submits with the chosen slug. A wrong slug for that email is `401` like any other
+credential failure, so workspace existence is not disclosed.
 
 ### 4.2 Workspace and team
 
 | Method | Path | Roles | Notes |
 | --- | --- | --- | --- |
 | GET | `/workspace` | OWNER, ADMIN | Current tenant settings + usage counts |
-| PUT | `/workspace` | OWNER, ADMIN | `{name, timezone, currency}`; slug immutable |
+| PUT | `/workspace` | OWNER, ADMIN | `{name, timezone, currency, countryCode, locale, industryTemplate, legalName?, taxNumber?}`; slug immutable |
 | GET | `/team` | OWNER, ADMIN | Active + inactive users, no password data |
 | GET | `/team/assignable` | OWNER, ADMIN, MANAGER | `[{id, fullName}]`, active users only — the scheduling picker, so managers never see team administration data |
 | POST | `/team` | OWNER, ADMIN | `{fullName, email, password, role}`; cannot create `OWNER` (v1) |
@@ -483,10 +505,14 @@ with `SET LOCAL app.tenant_id`, and per-tenant encryption keys.
 | TTL | 15 min (configurable 5–60) | 30 days |
 | Storage | client memory | client secure storage; SHA-256 hash server-side |
 | Rotation | — | single use; each refresh issues a new token and revokes the old one |
-| Revocation | stateless (short TTL) | `revoked_at`, cascade revoke on reuse detection, logout, password change, deactivation |
+| Chain | — | `family_id` shared by every rotation of one login; `replaced_by` links the sequence |
+| Revocation | stateless (short TTL) | `revoked_at`; logout, password change, deactivation and reuse detection |
 
-Reuse detection: presenting a token that exists but is revoked/expired revokes all active refresh
-tokens for that user and returns `REFRESH_TOKEN_REUSED`; the SPA forces re-login.
+Reuse detection: presenting a token that was already rotated revokes every token in that `family_id`
+(not the user's other sessions, which keep their own families) and returns `REFRESH_TOKEN_REUSED`; the
+SPA forces re-login. The event is audited as `REFRESH_TOKEN_REUSE`. A concurrent refresh race — two tabs
+rotating the same token — therefore ends in one success and one forced re-login, which is the intended
+trade against silent token replay.
 
 Secret handling: `OPERONIX_JWT_SECRET` must be ≥ 32 bytes. In `dev`, a documented non-secret default
 is allowed; in `prod` the application refuses to start without a secret or with the dev default.
@@ -518,8 +544,11 @@ returns `404` for jobs they are not assigned to (no existence leak).
   credentials (bearer tokens, not cookies).
 - No server session, no CSRF token (stateless bearer API); state-changing endpoints still require a
   valid bearer token.
-- Rate limiting: login 10 attempts / 5 min per `(ip, email)`, refresh 30 / 5 min per IP; sliding
-  window in memory; `429` + `Retry-After`.
+- Rate limiting: login 10 attempts / 5 min per `(ip, email)`, register 5 / 10 min per IP,
+  refresh 30 / 5 min per IP. Counters live in the shared `rate_limit_counter` table (atomic upsert per
+  fixed window) so the limit holds across every Cloud Run instance instead of multiplying with replica
+  count; `429` + `Retry-After` computed from the window end. Windows older than 24 h are pruned
+  opportunistically every 500 calls.
 
 ### 9.4 Password handling
 
@@ -560,7 +589,7 @@ customer records. Audit rows are append-only; no update/delete API.
 | Layer | Tooling | Coverage |
 | --- | --- | --- |
 | Unit | JUnit 5 + AssertJ | `MoneyCalculatorTest`: line rounding, header discount allocation, tax, half-up behaviour, zero/negative guards |
-| API integration | `@SpringBootTest` + MockMvc + embedded PostgreSQL + Flyway | `AuthFlowIT`: registration, login, refresh rotation + reuse detection, logout, cross-tenant 404s, role enforcement (technician/manager/owner matrix), audit filters, create-response timestamps. `SalesFlowIT`: quote totals and transitions, discount inheritance into the derived invoice, job conflicts and series rollback, invoice status/balance maths, over-payment rejection, payment reversal, dashboard metrics |
+| API integration | `@SpringBootTest` + MockMvc + embedded PostgreSQL + Flyway | `AuthFlowIT`: registration, login, refresh rotation + reuse detection, logout, cross-tenant 404s, role enforcement (technician/manager/owner matrix), audit filters, create-response timestamps. `GlobalFoundationIT`: public reference data, country-derived registration defaults, workspace regional update round-trip, shared rate-limit counter, multi-workspace membership resolution. `SalesFlowIT`: quote totals and transitions, discount inheritance into the derived invoice, job conflicts and series rollback, invoice status/balance maths, over-payment rejection, payment reversal, dashboard metrics |
 | Static hosting / packaging | `@SpringBootTest` + MockMvc (fixture bundle) and a plain unit test | `SpaHostingIT`: shell at `/`, deep-link fallback, asset served with its own content type, missing asset `404`, `/api/**` never rewritten, readiness public, CSP includes the font origins. `WebStaticConfigTest`: resolver rules (`""`, `"."`, routes, dirs, assets, traversal, server prefixes) |
 | Frontend | `tsc -b` + `vite build` | Type-safe API client and pages compile; no automated browser suite in v1 |
 
@@ -721,3 +750,64 @@ Secrets are injected from Secret Manager as `OPERONIX_JWT_SECRET` and `OPERONIX_
 
 See [GOOGLE_CLOUD_DEPLOYMENT.md](GOOGLE_CLOUD_DEPLOYMENT.md) for the architecture and
 [OPERATIONS_RUNBOOK.md](OPERATIONS_RUNBOOK.md) for day-2 operations.
+
+---
+
+## 17. Operonix 2.0 P0 — implemented changes
+
+Scope: industry neutrality, global tenant configuration, multi-workspace identity and auth hardening.
+No financial, scheduling or reporting rule changed. See HLD §14 for the architectural view.
+
+### 17.1 New module `com.operonix.global`
+
+| Class | Responsibility |
+| --- | --- |
+| `Country` / `Currency` | Read-only platform entities mapped to the V2 tables |
+| `IndustryTemplate` | Enum of 10 profiles: label, description, default job title; `from(null)` → `GENERAL_SERVICE`, unknown → `null` (caller turns that into a validation error) |
+| `ReferenceDataService` | `all()` for the public catalogue; `requireCountry` / `requireCurrency` normalise and validate; `resolveIndustry` maps the request value onto the enum |
+| `ReferenceDataController` | `GET /api/v1/reference`, public, no tenant context |
+
+Platform tables carry no `tenant_id`. They are the one category of data the platform owns outright, so
+`TenantContext` remains empty for `/reference` exactly as it does for `/auth/**`.
+
+### 17.2 Regional configuration rules
+
+- `countryCode` drives defaults only. Changing it in settings does **not** silently rewrite `currency`,
+  `locale` or `timezone`; it seeds them on registration and is otherwise an independent choice.
+- `locale` must match `^[a-z]{2}(-[A-Z]{2})?$` (DB check + DTO validation); it is the single input to
+  `Intl` formatting on the client.
+- `industryTemplate` is constrained by `ck_tenant_industry`; a value outside the catalogue is `400`.
+- `legalName` and `taxNumber` are optional on every path. `taxNumber` is never returned in session
+  payloads and only appears on `GET /workspace` for owners/admins.
+- `onboardedAt` is stamped when the workspace completes the onboarding step; it is informational in P0.
+
+### 17.3 Identity changes
+
+`AuthService.register` now: validates regional inputs → creates tenant with derived defaults → creates
+the owner row → issues the first token family. `AuthService.login` resolves candidates by lowercased
+email, requires a workspace slug when more than one exists (`WORKSPACE_REQUIRED`), then verifies the
+password against that membership only. `TeamService` keeps per-workspace email uniqueness and returns
+`409 EMAIL_IN_USE` when the address already exists in *this* workspace (an address in another workspace
+is allowed and must not be disclosed).
+
+### 17.4 Rate limiting
+
+`AuthRateLimiter.tryAcquire(key, limit, window)` performs one `insert … on conflict … returning hits`, so
+counting is atomic across instances. Keys are namespaced by the caller before the call
+(`login:<ip>:<email>`, `register:<ip>`, `refresh:<ip>`). `retryAfterSeconds` derives `Retry-After` from the
+window end. `reset(key)` exists for tests only.
+
+### 17.5 Frontend contract additions
+
+`/reference` is fetched once per session and cached by TanStack Query; onboarding and workspace settings
+render from it. See [FRONTEND_GLOBALIZATION.md](FRONTEND_GLOBALIZATION.md) for the formatting authority
+(`lib/format.ts`), the i18n catalogue and the tenant-locale binding.
+
+### 17.6 Known limitations (deliberate, P0)
+
+- One `app_user` row per membership: a person with two workspaces has two rows and two passwords. A
+  `membership` table with a single credential is the P1 target.
+- No per-industry terminology overrides yet; the template changes the default job title only.
+- `country.postal_code_regex` is stored but not enforced on customer addresses, to avoid rejecting
+  legitimate international formats before address handling is redesigned.
+- Only English copy is catalogued; `locale` currently changes formatting, not language.

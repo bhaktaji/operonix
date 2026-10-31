@@ -14,6 +14,7 @@ import type {
   Payment,
   Quote,
   QuoteInput,
+  ReferenceData,
   RevenueReport,
   Role,
   ServiceItem,
@@ -22,17 +23,20 @@ import type {
   TeamMember,
   Technician,
   Workspace,
+  WorkspaceInput,
+  RegisterInput,
 } from "./types";
 
 // ------------------------------------------------------------------ auth
 
 export const authApi = {
-  login: (email: string, password: string) =>
+  /** `workspace` is only needed when the same email belongs to more than one workspace. */
+  login: (email: string, password: string, workspace?: string) =>
     request<AuthResponse>("/auth/login", {
       method: "POST",
-      body: JSON.stringify({ email, password }),
+      body: JSON.stringify({ email, password, workspace }),
     }),
-  register: (input: { orgName: string; fullName: string; email: string; password: string }) =>
+  register: (input: RegisterInput) =>
     request<AuthResponse>("/auth/register", { method: "POST", body: JSON.stringify(input) }),
   me: () => request<MeResponse>("/auth/me"),
   logout: (refreshToken: string) =>
@@ -43,8 +47,14 @@ export const authApi = {
 
 export const workspaceApi = {
   get: () => request<Workspace>("/workspace"),
-  update: (input: { name: string; currency: string; timezone: string }) =>
+  update: (input: WorkspaceInput) =>
     request<Workspace>("/workspace", { method: "PUT", body: JSON.stringify(input) }),
+};
+
+// -------------------------------------------------------------- reference
+export const referenceApi = {
+  /** Public: countries, currencies and industry templates used by onboarding and settings. */
+  all: () => request<ReferenceData>("/reference"),
 };
 
 // ------------------------------------------------------------------ team

@@ -2,6 +2,7 @@ import type { ReactNode } from "react";
 import { Link, Navigate, Outlet, useLocation } from "react-router-dom";
 import { ShieldAlert } from "lucide-react";
 import { useAuth } from "./AuthProvider";
+import { BrandGlyph } from "@/components/Brand";
 import type { Role } from "@/api/types";
 
 export function SplashScreen() {
@@ -9,8 +10,9 @@ export function SplashScreen() {
     <div className="flex min-h-screen items-center justify-center bg-ink-950">
       <div className="flex flex-col items-center gap-4">
         <div className="flex h-12 w-12 items-center justify-center rounded-2xl bg-brand-500/15 text-brand-300 ring-1 ring-inset ring-brand-400/30">
-          <span className="font-display text-xl font-semibold">O</span>
+          <BrandGlyph className="h-6 w-6" />
         </div>
+        <p className="text-[11px] uppercase tracking-[0.22em] text-ink-400">Operonix</p>
         <div className="h-1 w-24 overflow-hidden rounded-full bg-white/10">
           <div className="h-full w-1/2 animate-pulse rounded-full bg-brand-400" />
         </div>

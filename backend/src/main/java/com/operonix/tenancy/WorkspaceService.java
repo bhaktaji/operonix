@@ -10,16 +10,12 @@ import com.operonix.tenancy.dto.WorkspaceResponse;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
-import java.time.DateTimeException;
-import java.time.ZoneId;
+import java.util.LinkedHashMap;
 import java.util.Locale;
 import java.util.Map;
-import java.util.Set;
 
 @Service
 public class WorkspaceService {
-
-    private static final Set<String> CURRENCIES = Set.of("USD", "EUR", "GBP", "INR", "AUD", "CAD");
 
     private final TenantService tenantService;
     private final AppUserRepository users;
@@ -42,20 +38,30 @@ public class WorkspaceService {
 
     @Transactional
     public WorkspaceResponse update(UpdateWorkspaceRequest request) {
-        String currency = request.currency().trim().toUpperCase(Locale.ROOT);
-        if (!CURRENCIES.contains(currency)) {
-            throw ApiException.validation("currency", "must be one of " + CURRENCIES);
-        }
-        try {
-            ZoneId.of(request.timezone());
-        } catch (DateTimeException ex) {
-            throw ApiException.validation("timezone", "must be a valid IANA timezone, e.g. America/New_York");
+        String locale = request.locale().trim();
+        if (!TenantService.looksLikeLocale(locale)) {
+            throw ApiException.validation("locale", "must be a BCP-47 tag such as en-GB");
         }
         var tenantId = currentUser.tenantId();
-        Tenant tenant = tenantService.update(tenantId, request.name(), currency, request.timezone());
-        audit.record(AuditAction.WORKSPACE_UPDATED, "tenant", tenant.getId(),
-                Map.of("name", tenant.getName(), "currency", tenant.getCurrency(),
-                        "timezone", tenant.getTimezone()));
+        Tenant tenant = tenantService.update(tenantId, new TenantService.WorkspaceChanges(
+                request.name(),
+                request.countryCode().trim().toUpperCase(Locale.ROOT),
+                request.currency().trim().toUpperCase(Locale.ROOT),
+                request.timezone().trim(),
+                locale,
+                request.industryTemplate().trim(),
+                request.legalName(),
+                request.taxNumber()));
+
+        Map<String, Object> detail = new LinkedHashMap<>();
+        detail.put("name", tenant.getName());
+        detail.put("country", tenant.getCountryCode());
+        detail.put("currency", tenant.getCurrency());
+        detail.put("timezone", tenant.getTimezone());
+        detail.put("locale", tenant.getLocale());
+        detail.put("industryTemplate", tenant.getIndustryTemplate());
+        audit.record(AuditAction.WORKSPACE_UPDATED, "tenant", tenant.getId(), detail);
+
         return WorkspaceResponse.from(tenant, users.countByTenantId(tenantId));
     }
 }

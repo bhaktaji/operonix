@@ -123,7 +123,7 @@ export function CustomerDetail() {
       </div>
 
       <div className="grid gap-4 xl:grid-cols-[1.4fr_1fr]">
-        <SectionCard title="Contact & billing" description="Details your crew and invoices rely on">
+        <SectionCard title="Contact & billing" description="The details your team and documents rely on">
           <dl className="grid gap-4 sm:grid-cols-2">
             <div>
               <dt className="text-[11px] font-semibold uppercase tracking-[0.12em] text-ink-400">Contact</dt>
