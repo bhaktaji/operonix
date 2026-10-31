@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useState } from "react";
+import { Link } from "react-router-dom";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Building2, Globe2, ShieldCheck } from "lucide-react";
 import { referenceApi, workspaceApi } from "@/api/endpoints";
@@ -114,6 +115,11 @@ export function Settings() {
         kicker="Administration"
         title="Workspace settings"
         description="Business identity, regional configuration and the defaults new documents inherit."
+        actions={
+          <Link to="/settings/financial" className="inline-flex">
+            <Button variant="secondary" size="sm">Financial settings</Button>
+          </Link>
+        }
       />
 
       <div className="grid gap-4 xl:grid-cols-[1.5fr_1fr]">

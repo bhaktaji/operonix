@@ -136,6 +136,7 @@ export interface ServiceItem {
   basePrice: number;
   durationMinutes: number;
   taxRate: number;
+  taxProfileId?: string | null;
   active: boolean;
   version: number;
   createdAt: string;
@@ -209,6 +210,15 @@ export interface Job {
 export type InvoiceStatus = "DRAFT" | "SENT" | "PARTIALLY_PAID" | "PAID" | "VOID";
 export type PaymentMethod = "CASH" | "CARD" | "BANK_TRANSFER" | "CHECK" | "OTHER";
 
+/** One printed tax row on a document: CGST 9% on 100.00 = 9.00. */
+export interface TaxAmount {
+  code: string;
+  name: string;
+  rate: number;
+  base: number;
+  amount: number;
+}
+
 export interface InvoiceLine {
   id: string;
   serviceItemId?: string | null;
@@ -220,6 +230,8 @@ export interface InvoiceLine {
   lineSubtotal: number;
   lineTax: number;
   lineTotal: number;
+  /** Printed tax rows snapshotted when the invoice was priced. */
+  taxComponents?: TaxAmount[];
 }
 
 export interface Payment {
@@ -251,6 +263,17 @@ export interface Invoice {
   balance: number;
   paidAt?: string | null;
   voidReason?: string | null;
+  /** Seller and tax snapshot taken at issue time (P1a). */
+  legalEntityId?: string | null;
+  taxProfileName?: string | null;
+  taxMode?: "EXCLUSIVE" | "INCLUSIVE";
+  taxNumber?: string | null;
+  reverseCharge?: boolean;
+  fxRate?: number;
+  baseCurrency?: string;
+  baseTotal?: number;
+  baseAmountPaid?: number;
+  taxComponents?: TaxAmount[];
   lines: InvoiceLine[];
   payments: Payment[];
   version: number;

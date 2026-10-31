@@ -7,11 +7,14 @@ import jakarta.persistence.FetchType;
 import jakarta.persistence.JoinColumn;
 import jakarta.persistence.ManyToOne;
 import jakarta.persistence.Table;
+import jakarta.persistence.Transient;
+import com.operonix.common.money.MoneyCalculator;
 import lombok.Getter;
 import lombok.NoArgsConstructor;
 import lombok.Setter;
 
 import java.math.BigDecimal;
+import java.util.List;
 import java.util.UUID;
 
 @Entity
@@ -51,4 +54,8 @@ public class InvoiceLine extends TenantEntity {
 
     @Column(name = "line_total", nullable = false, precision = 12, scale = 2)
     private BigDecimal lineTotal;
+
+    /** Printed tax rows, written to {@code line_tax_component} after the line has an id. */
+    @Transient
+    private List<MoneyCalculator.TaxComponentAmount> taxComponents = new java.util.ArrayList<>();
 }

@@ -21,11 +21,14 @@ public class CatalogService {
     private final ServiceItemRepository items;
     private final CurrentUser currentUser;
     private final AuditService audit;
+    private final com.operonix.finance.TaxService tax;
 
-    public CatalogService(ServiceItemRepository items, CurrentUser currentUser, AuditService audit) {
+    public CatalogService(ServiceItemRepository items, CurrentUser currentUser, AuditService audit,
+                          com.operonix.finance.TaxService tax) {
         this.items = items;
         this.currentUser = currentUser;
         this.audit = audit;
+        this.tax = tax;
     }
 
     @Transactional(readOnly = true)
@@ -81,6 +84,11 @@ public class CatalogService {
         item.setBasePrice(request.basePrice().max(BigDecimal.ZERO));
         item.setDurationMinutes(request.durationMinutes());
         item.setTaxRate(request.taxRate());
+        if (request.taxProfileId() != null) {
+            // Rejects a profile from another workspace before it can be attached.
+            tax.require(currentUser.tenantId(), request.taxProfileId());
+        }
+        item.setTaxProfileId(request.taxProfileId());
         item.setActive(request.active());
     }
 }

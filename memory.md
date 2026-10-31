@@ -6,7 +6,7 @@
 
 | Field | Value |
 | --- | --- |
-| Last updated | 2026-10-31 (session 5) |
+| Last updated | 2026-10-31 (session 6) |
 | Current phase | **Operonix 2.0 P0-1…P0-3 COMPLETE** — global/industry-neutral foundation shipped on top of the verified MVP |
 | Next phase | **STOPPED by instruction.** P1a (financial refactor, multi-currency, tax profiles) must not start until the owner approves |
 | Overall status | Working end-to-end locally: industry-neutral UI, country-derived onboarding, multi-workspace sign-in, refresh-token families, shared rate limiter |
@@ -47,14 +47,17 @@ native apps, attachments, route optimisation, SSO, SaaS billing, cross-workspace
 | Logging | Logback; JSON encoder on stdout under the `prod` profile (Cloud Logging) |
 | Tests | JUnit 5, AssertJ, MockMvc, Zonky embedded PostgreSQL 2.2.2 |
 | Frontend | React 18.3, TypeScript 5.6, Vite 5.4, React Router 6.28, TanStack Query 5, Tailwind 3.4 |
-| Backend build | Maven 3.9.9 + JDK 21 from project-local `.tools/` (git-ignored) |
+| Backend build | Maven 3.9.9 + JDK 21 from `C:\Tools` (machine-wide, on `PATH`) |
 | Frontend build | **npm** with `frontend/package-lock.json` (single lockfile; `npm ci` in CI and Docker) |
 | Deployment | Cloud Run (one service), Cloud SQL PostgreSQL 16, Artifact Registry, Cloud Build, Secret Manager, Cloud Logging/Monitoring |
 | IaC / CI | Terraform (minimal, not applied), GitHub Actions (CI + WIF deployment) |
 
-**Local toolchain note:** this machine has no system JDK 21, Maven, Docker, `gcloud`, Terraform or
-Python. Everything runs from `.tools/` (`jdk-21.0.13+9`, `apache-maven-3.9.9`). Integration tests use
-embedded PostgreSQL, so `mvn test` needs no database server and no container runtime.
+**Local toolchain note:** JDK 21 (`C:\Tools\jdk-21.0.13+9`) and Maven 3.9.9
+(`C:\Tools\apache-maven-3.9.9`) are installed machine-wide and registered in `JAVA_HOME`,
+`MAVEN_HOME` and `PATH` by `scripts/windows/setup-toolchain.ps1`. A new shell therefore runs
+`java`, `javac` and `mvn` with no project-local overrides; `.tools/` no longer exists. Docker,
+`gcloud`, Terraform and Python are still absent. Integration tests use embedded PostgreSQL, so
+`mvn test` needs no database server and no container runtime.
 ---
 
 ## 3. Repository structure
@@ -71,8 +74,9 @@ operonix/
 ├── infra/terraform/         versions, variables, platform, run, outputs, README, tfvars example
 ├── .github/workflows/       ci.yml (tests/build/image), deploy.yml (WIF build+migrate+deploy)
 ├── Dockerfile               SPA -> jar with bundle -> non-root JRE runtime (single Cloud Run image)
-├── .dockerignore            excludes .tools, node_modules, dist, target, .env, keys
-├── .gitignore               excludes .tools, build output, deploy/gcp/.env, state, keys
+├── scripts/windows/         setup-toolchain.ps1 (JDK/Maven install + persistent env vars)
+├── .dockerignore            excludes node_modules, dist, target, .env, keys
+├── .gitignore               excludes build output, deploy/gcp/.env, state, keys
 ├── cloudbuild.yaml          build+push, optional migrate job + Cloud Run deploy (_DEPLOY=true)
 ├── compose.yaml             PostgreSQL 16 for local development
 ├── README.md                setup, commands, scope, deployment pointer, limitations
@@ -233,11 +237,10 @@ previous session (PIDs 19320, 2196) were stopped because they held a lock on the
 
 ```bash
 # Backend tests (embedded PostgreSQL, no Docker or server needed)
-cd backend
-JAVA_HOME=../.tools/jdk-21.0.13+9 ../.tools/apache-maven-3.9.9/bin/mvn test
+cd backend && mvn test
 
 # Backend run locally (needs PostgreSQL; dev profile supplies a dev-only JWT secret)
-cd backend && JAVA_HOME=../.tools/jdk-21.0.13+9 java -jar target/operonix-api.jar --server.port=8080
+cd backend && java -jar target/operonix-api.jar --server.port=8080
 
 # Frontend
 cd frontend && npm ci && npm run dev      # :5173, proxies /api -> :8080
@@ -248,7 +251,7 @@ cd frontend && node scripts/smoke.mjs
 
 # Production-shaped local run (what the container does)
 cd frontend && npm run build && cp -r dist/* ../backend/src/main/resources/static/
-cd backend && JAVA_HOME=../.tools/jdk-21.0.13+9 ../.tools/apache-maven-3.9.9/bin/mvn -DskipTests package
+cd backend && mvn -DskipTests package
 SPRING_PROFILES_ACTIVE=prod OPERONIX_DB_URL=jdbc:postgresql://localhost:5432/operonix \
   OPERONIX_DB_USER=operonix OPERONIX_DB_PASSWORD=operonix \
   OPERONIX_JWT_SECRET=<32+ random bytes> java -jar target/operonix-api.jar
@@ -461,7 +464,7 @@ Two defects were found and fixed during the session (both caught by tests, not b
 3. To verify the current state from scratch:
    ```bash
    # backend tests (embedded PostgreSQL, no Docker needed)
-   cd backend && JAVA_HOME=../.tools/jdk-21.0.13+9 ../.tools/apache-maven-3.9.9/bin/mvn test   # 40 tests
+   cd backend && mvn test   # 40 tests at the time of session 5; 56 since P1a
    # frontend
    cd frontend && npm run typecheck && npm run build
    # live
@@ -471,3 +474,90 @@ Two defects were found and fixed during the session (both caught by tests, not b
    If you add a country or currency, extend `V2`'s seed tables in a **new** migration (`V3__…`) — never edit
    an applied migration.
 5. Before ending a session, update §12/§13 here with the stopping point and the exact next command.
+
+---
+
+## 14. Session 6 — P1a financial foundation + global Windows toolchain (IMPLEMENTED, VERIFIED, STOPPED)
+
+### 14.1 Git checkpoint (done first, as instructed)
+
+- `f4a3f3b` — baseline before Operonix 2.0 (pre-existing).
+- `da397f9` — **P0 committed as one reviewable commit** (61 paths, tree clean afterwards).
+  Git had no commit identity, so the repository-local `user.name`/`user.email` were set to
+  `Codebuff <noreply@codebuff.com>` (matching the baseline author). No global git config was touched.
+- P1a work is the uncommitted working tree after `da397f9`.
+
+### 14.2 Windows toolchain (moved out of the checkout)
+
+- `.tools/jdk-21.0.13+9` → `C:\Tools\jdk-21.0.13+9`; `.tools/apache-maven-3.9.9` →
+  `C:\Tools\apache-maven-3.9.9`. The empty `.tools/` directory was removed after verification.
+- `scripts/windows/setup-toolchain.ps1` writes `JAVA_HOME`, `MAVEN_HOME` and prepends
+  `%JAVA_HOME%\bin;%MAVEN_HOME%\bin` to `PATH` at **user** and (with `-Scope Machine`) **machine** scope.
+  It reads the registry PATH, de-duplicates entries and rewrites it as a single string; `setx` is never
+  used (1024-character truncation + REG_EXPAND_SZ loss).
+- The machine scope was applied with explicit administrator approval, because the machine PATH began
+  with Corretto JDK 8. Verified from a registry-rebuilt environment (what a new shell sees):
+  `java -version` → 21.0.13, `javac -version` → 21.0.13, `mvn -version` → Maven 3.9.9 running on
+  `C:\Tools\jdk-21.0.13+9`, `where java` lists `C:\Tools\...` first.
+- A stale `operonix-api.jar` process (PID 19468) was holding a file lock in `.tools`; it was the dev
+  server from the previous session and was terminated to allow the move.
+
+### 14.3 P1a backend (new `V3__global_financial_foundation.sql`)
+
+Additive migration: `tax_definition` + `tax_component` (12 seeded jurisdictions, 14 components),
+`tax_profile`, `legal_entity`, `business_location`, `tenant_settings`, `document_number_rule`,
+`exchange_rate`, `line_tax_component`; `quote`/`invoice` gained entity/tax-mode/FX/base-total snapshot
+columns; `service_item.tax_profile_id`. Backfills: one default entity + profile + settings row +
+"Main location" + three numbering rules per existing tenant; `fx_rate = 1`,
+`base_currency = currency`, `base_total = total`, `base_amount_paid = amount_paid`.
+
+Code: `com.operonix.finance` (`FinanceService`, `TaxService`, `OrganisationService`,
+`ExchangeRateService`, `TaxSnapshotWriter`, `WorkspaceFinanceBootstrap`, controllers, DTOs),
+`DocumentNumberService` rewritten to read `document_number_rule`, `MoneyCalculator` extended with
+currency scale, inclusive/exclusive mode and per-component allocation while keeping its two-argument
+behaviour byte-identical. `WorkspaceProvisionedEvent` seeds finance defaults without a module cycle.
+
+API: `/api/v1/tax/{definitions,profiles}`, `/legal-entities`, `/business-locations`,
+`/workspace/financial-settings`, `/number-rules`, `/exchange-rates`.
+
+Frontend: `api/finance.ts`, `pages/FinanceSettings.tsx` (`/settings/financial`, linked from Settings),
+invoice detail now prints per-component tax rows, tax mode and the base-currency equivalent, catalog
+gains a tax-profile selector.
+
+### 14.4 Verification actually run (session 6)
+
+| Check | Result |
+| --- | --- |
+| `mvn test` (JDK 21 from `C:\Tools`) | **56 tests, 0 failures** — MoneyCalculatorTest 14, SpaHostingIT 7, WebStaticConfigTest 4, FinancialFoundationIT 8, GlobalFoundationIT 10, AuthFlowIT 11, SalesFlowIT 2 |
+| Flyway V1→V3 + `ddl-auto=validate` | applied inside every integration test; V3 also ran on the pre-P1a schema |
+| `npm run typecheck` | clean |
+| `npm run build` | 413.29 kB JS / 35.07 kB CSS |
+| New `FinancialFoundationIT` | seeds, inclusive VAT gross, JPY whole-yen rounding, FX snapshot immutability, tax-component snapshot vs profile edit, numbering change, base-currency payments, cross-tenant 404s |
+
+Two implementation bugs were caught by those tests and fixed: `document_number_rule.created_at` and
+`tenant_settings.created_at` had no generator (insert failed with `409`), and a catalog item's tax
+profile correctly overrides an explicit rate — the initial test expectation was wrong, the code was not.
+
+### 14.5 Deviations from the approved P1a roadmap
+
+- P1a-7 address model and P1a-8 fiscal-year reporting are partial (columns stored, not enforced/used).
+- P1a-9 keeps the delete-on-reversal behaviour and adds `base_amount_paid`; no `payment_reversal` ledger.
+- P1a-10 (payment gateway) not started. No costing/BI/AI, no cloud resources, no deployment.
+
+### 14.6 Known issues / pending
+
+- Compound tax components are summed, not compounded (no seeded market needs compounding).
+- `exchange_rate` rows are global, so a rate pair is unique across tenants for a given date by design.
+- `numeric(12,2)` storage is unchanged; JPY rounds to whole units at calculation time.
+- The P1a tree is uncommitted; the next agent should commit it before P1b.
+- No browser run in this session (UI verified by typecheck/build only); earlier sessions verified the
+  shell visually with `docs/screenshots/`.
+
+### 14.7 How to resume (P1b, only after approval)
+
+1. Read `memory.md` (this section), `docs/HLD.md` §15, `docs/LLD.md` §18, `docs/ERD.md` §9.
+2. Prove the baseline: `cd backend && mvn test` (56) and `cd frontend && npm run typecheck && npm run build`.
+3. Commit P1a as one reviewable commit before adding costing tables.
+4. Then follow `IMPLEMENTATION_ROADMAP.md` §4 (P1b): `work_log`, `vendor`, `expense`, `job_cost`,
+   `service_item.cost`, `job.actual_start/actual_end`, `recurring_series`. Costing must render
+   **"cost not recorded"** rather than a 100% margin — that is P1b's acceptance criterion.

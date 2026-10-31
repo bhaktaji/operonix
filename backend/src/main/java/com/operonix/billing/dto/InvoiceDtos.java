@@ -4,6 +4,7 @@ import com.operonix.billing.Invoice;
 import com.operonix.billing.InvoiceLine;
 import com.operonix.billing.Payment;
 import com.operonix.customer.dto.CustomerDtos;
+import com.operonix.finance.FinanceDtos;
 import jakarta.validation.Valid;
 import jakarta.validation.constraints.DecimalMax;
 import jakarta.validation.constraints.DecimalMin;
@@ -16,6 +17,7 @@ import java.math.BigDecimal;
 import java.time.Instant;
 import java.time.LocalDate;
 import java.util.List;
+import java.util.Map;
 import java.util.UUID;
 
 public final class InvoiceDtos {
@@ -37,6 +39,7 @@ public final class InvoiceDtos {
             UUID jobId,
             LocalDate issueDate,
             LocalDate dueDate,
+            @Size(max = 3) String currency,
             @Size(max = 2000) String notes,
             @DecimalMin("0") @Digits(integer = 10, fraction = 2) BigDecimal discountAmount,
             @Valid List<LineRequest> lines
@@ -74,12 +77,17 @@ public final class InvoiceDtos {
 
     public record LineResponse(UUID id, UUID serviceItemId, int position, String description,
                                BigDecimal quantity, BigDecimal unitPrice, BigDecimal taxRate,
-                               BigDecimal lineSubtotal, BigDecimal lineTax, BigDecimal lineTotal) {
+                               BigDecimal lineSubtotal, BigDecimal lineTax, BigDecimal lineTotal,
+                               List<FinanceDtos.TaxAmountResponse> taxComponents) {
 
         public static LineResponse from(InvoiceLine line) {
+            return from(line, List.of());
+        }
+
+        public static LineResponse from(InvoiceLine line, List<FinanceDtos.TaxAmountResponse> taxComponents) {
             return new LineResponse(line.getId(), line.getServiceItemId(), line.getPosition(),
                     line.getDescription(), line.getQuantity(), line.getUnitPrice(), line.getTaxRate(),
-                    line.getLineSubtotal(), line.getLineTax(), line.getLineTotal());
+                    line.getLineSubtotal(), line.getLineTax(), line.getLineTotal(), taxComponents);
         }
     }
 
@@ -96,17 +104,35 @@ public final class InvoiceDtos {
                            CustomerDtos.Summary customer, UUID jobId, LocalDate issueDate, LocalDate dueDate,
                            String currency, String notes, BigDecimal subtotal, BigDecimal discountAmount,
                            BigDecimal taxAmount, BigDecimal total, BigDecimal amountPaid, BigDecimal balance,
-                           Instant paidAt, String voidReason, List<LineResponse> lines,
-                           List<PaymentResponse> payments, long version, Instant createdAt, Instant updatedAt) {
+                           Instant paidAt, String voidReason,
+                           UUID legalEntityId, String taxProfileName, String taxMode, String taxNumber,
+                           boolean reverseCharge, BigDecimal fxRate, String baseCurrency, BigDecimal baseTotal,
+                           BigDecimal baseAmountPaid,
+                           List<FinanceDtos.TaxAmountResponse> taxComponents,
+                           List<LineResponse> lines, List<PaymentResponse> payments, long version,
+                           Instant createdAt, Instant updatedAt) {
 
         public static Response from(Invoice invoice, CustomerDtos.Summary customer, List<Payment> payments,
                                     boolean overdue) {
+            return from(invoice, customer, payments, overdue, Map.of(), List.of());
+        }
+
+        public static Response from(Invoice invoice, CustomerDtos.Summary customer, List<Payment> payments,
+                                    boolean overdue,
+                                    Map<UUID, List<FinanceDtos.TaxAmountResponse>> lineComponents,
+                                    List<FinanceDtos.TaxAmountResponse> documentComponents) {
+            List<LineResponse> lines = invoice.getLines().stream()
+                    .map(line -> LineResponse.from(line, lineComponents.getOrDefault(line.getId(), List.of())))
+                    .toList();
             return new Response(invoice.getId(), invoice.getNumber(), invoice.getStatus().name(), overdue,
                     customer, invoice.getJobId(), invoice.getIssueDate(), invoice.getDueDate(),
                     invoice.getCurrency(), invoice.getNotes(), invoice.getSubtotal(),
                     invoice.getDiscountAmount(), invoice.getTaxAmount(), invoice.getTotal(),
                     invoice.getAmountPaid(), invoice.balance(), invoice.getPaidAt(), invoice.getVoidReason(),
-                    invoice.getLines().stream().map(LineResponse::from).toList(),
+                    invoice.getLegalEntityId(), invoice.getTaxProfileName(), invoice.getTaxMode(),
+                    invoice.getTaxNumber(), invoice.isReverseCharge(), invoice.getFxRate(),
+                    invoice.getBaseCurrency(), invoice.getBaseTotal(), invoice.getBaseAmountPaid(),
+                    documentComponents, lines,
                     payments.stream().map(PaymentResponse::from).toList(),
                     invoice.getVersion(), invoice.getCreatedAt(), invoice.getUpdatedAt());
         }

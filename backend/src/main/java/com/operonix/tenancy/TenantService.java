@@ -22,11 +22,14 @@ public class TenantService {
     private final TenantRepository repository;
     private final ReferenceDataService referenceData;
     private final Clock clock;
+    private final org.springframework.context.ApplicationEventPublisher events;
 
-    public TenantService(TenantRepository repository, ReferenceDataService referenceData, Clock clock) {
+    public TenantService(TenantRepository repository, ReferenceDataService referenceData, Clock clock,
+                         org.springframework.context.ApplicationEventPublisher events) {
         this.repository = repository;
         this.referenceData = referenceData;
         this.clock = clock;
+        this.events = events;
     }
 
     @Transactional(readOnly = true)
@@ -71,7 +74,10 @@ public class TenantService {
         tenant.setLegalName(trimToNull(provisioning.legalName()));
         tenant.setTaxNumber(trimToNull(provisioning.taxNumber()));
         tenant.setOnboardedAt(clock.instant());
-        return repository.save(tenant);
+        Tenant saved = repository.save(tenant);
+        // Finance seeds the default entity, tax profile, settings and location in the same transaction.
+        events.publishEvent(new WorkspaceProvisionedEvent(saved.getId()));
+        return saved;
     }
 
     @Transactional

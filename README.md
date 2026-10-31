@@ -86,9 +86,18 @@ cd frontend && node scripts/smoke.mjs
 cd frontend && node scripts/demo-seed.mjs
 ```
 
-On a machine without system JDK/Maven, this repository was developed with a project-local toolchain
-in `.tools/` (git-ignored): `JAVA_HOME=$PWD/.tools/jdk-21.0.13+9` and
-`$PWD/.tools/apache-maven-3.9.9/bin/mvn`.
+The build toolchain lives at a machine-wide location, not inside the checkout:
+
+- JDK 21 → `C:\Tools\jdk-21.0.13+9` (`JAVA_HOME`)
+- Maven 3.9.9 → `C:\Tools\apache-maven-3.9.9` (`MAVEN_HOME`), with both `bin` directories on `PATH`
+
+`scripts/windows/setup-toolchain.ps1` installs that layout and writes the persistent variables without
+`setx` (which truncates `PATH`). Run it once per machine; run it with `-Scope Machine` from an elevated
+shell to make JDK 21 the default for every account. Open a new terminal afterwards and check
+`java -version`, `javac -version` and `mvn -version`.
+
+Financial configuration (legal entities, business locations, tax profiles, numbering rules and FX
+rates) is managed under **Settings → Financial settings**; see [docs/LLD.md](docs/LLD.md) §18.
 
 ## Deployment (Google Cloud)
 

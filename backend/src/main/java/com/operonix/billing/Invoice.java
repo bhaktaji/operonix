@@ -51,6 +51,37 @@ public class Invoice extends TenantEntity {
     @Column(name = "currency", nullable = false, length = 3)
     private String currency;
 
+    /** Seller and tax snapshot (P1a): everything needed to reprint this invoice as issued. */
+    @Column(name = "legal_entity_id")
+    private UUID legalEntityId;
+
+    @Column(name = "tax_profile_id")
+    private UUID taxProfileId;
+
+    @Column(name = "tax_profile_name", length = 120)
+    private String taxProfileName;
+
+    @Column(name = "tax_mode", nullable = false, length = 10)
+    private String taxMode = "EXCLUSIVE";
+
+    @Column(name = "tax_number", length = 32)
+    private String taxNumber;
+
+    @Column(name = "reverse_charge", nullable = false)
+    private boolean reverseCharge;
+
+    @Column(name = "fx_rate", nullable = false, precision = 18, scale = 8)
+    private BigDecimal fxRate = BigDecimal.ONE;
+
+    @Column(name = "base_currency", nullable = false, length = 3)
+    private String baseCurrency;
+
+    @Column(name = "base_total", nullable = false, precision = 12, scale = 2)
+    private BigDecimal baseTotal = BigDecimal.ZERO;
+
+    @Column(name = "base_amount_paid", nullable = false, precision = 12, scale = 2)
+    private BigDecimal baseAmountPaid = BigDecimal.ZERO;
+
     @Column(name = "notes", length = 2000)
     private String notes;
 

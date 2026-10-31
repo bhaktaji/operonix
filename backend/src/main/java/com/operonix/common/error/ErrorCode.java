@@ -23,6 +23,7 @@ public enum ErrorCode {
     SELF_MODIFICATION(HttpStatus.CONFLICT, "You cannot change your own access"),
     CONCURRENT_MODIFICATION(HttpStatus.CONFLICT, "Resource was modified concurrently"),
     PAYMENT_EXCEEDS_BALANCE(HttpStatus.UNPROCESSABLE_ENTITY, "Payment exceeds invoice balance"),
+    FX_RATE_MISSING(HttpStatus.UNPROCESSABLE_ENTITY, "Exchange rate missing"),
     INVOICE_HAS_PAYMENTS(HttpStatus.CONFLICT, "Invoice has payments recorded"),
     NO_INVOICEABLE_LINES(HttpStatus.UNPROCESSABLE_ENTITY, "No invoiceable lines"),
     RATE_LIMITED(HttpStatus.TOO_MANY_REQUESTS, "Too many attempts"),

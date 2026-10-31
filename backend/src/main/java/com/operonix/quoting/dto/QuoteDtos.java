@@ -1,6 +1,7 @@
 package com.operonix.quoting.dto;
 
 import com.operonix.customer.dto.CustomerDtos;
+import com.operonix.finance.FinanceDtos;
 import com.operonix.quoting.Quote;
 import com.operonix.quoting.QuoteLine;
 import jakarta.validation.Valid;
@@ -15,6 +16,7 @@ import java.math.BigDecimal;
 import java.time.Instant;
 import java.time.LocalDate;
 import java.util.List;
+import java.util.Map;
 import java.util.UUID;
 
 public final class QuoteDtos {
@@ -36,6 +38,7 @@ public final class QuoteDtos {
             UUID locationId,
             LocalDate issueDate,
             LocalDate validUntil,
+            @Size(max = 3) String currency,
             @DecimalMin("0") @Digits(integer = 10, fraction = 2) BigDecimal discountAmount,
             @Size(max = 2000) String notes,
             @Valid List<LineRequest> lines
@@ -63,12 +66,17 @@ public final class QuoteDtos {
 
     public record LineResponse(UUID id, UUID serviceItemId, int position, String description,
                                BigDecimal quantity, BigDecimal unitPrice, BigDecimal taxRate,
-                               BigDecimal lineSubtotal, BigDecimal lineTax, BigDecimal lineTotal) {
+                               BigDecimal lineSubtotal, BigDecimal lineTax, BigDecimal lineTotal,
+                               List<FinanceDtos.TaxAmountResponse> taxComponents) {
 
         public static LineResponse from(QuoteLine line) {
+            return from(line, List.of());
+        }
+
+        public static LineResponse from(QuoteLine line, List<FinanceDtos.TaxAmountResponse> taxComponents) {
             return new LineResponse(line.getId(), line.getServiceItemId(), line.getPosition(),
                     line.getDescription(), line.getQuantity(), line.getUnitPrice(), line.getTaxRate(),
-                    line.getLineSubtotal(), line.getLineTax(), line.getLineTotal());
+                    line.getLineSubtotal(), line.getLineTax(), line.getLineTotal(), taxComponents);
         }
     }
 
@@ -76,15 +84,30 @@ public final class QuoteDtos {
                            CustomerDtos.LocationResponse location, LocalDate issueDate, LocalDate validUntil,
                            String currency, String notes, BigDecimal subtotal, BigDecimal discountAmount,
                            BigDecimal taxAmount, BigDecimal total, UUID convertedJobId,
+                           UUID legalEntityId, String taxProfileName, String taxMode, BigDecimal fxRate,
+                           String baseCurrency, BigDecimal baseTotal,
+                           List<FinanceDtos.TaxAmountResponse> taxComponents,
                            List<LineResponse> lines, long version, Instant createdAt, Instant updatedAt) {
 
         public static Response from(Quote quote, CustomerDtos.Summary customer,
                                     CustomerDtos.LocationResponse location) {
+            return from(quote, customer, location, Map.of(), List.of());
+        }
+
+        public static Response from(Quote quote, CustomerDtos.Summary customer,
+                                    CustomerDtos.LocationResponse location,
+                                    Map<UUID, List<FinanceDtos.TaxAmountResponse>> lineComponents,
+                                    List<FinanceDtos.TaxAmountResponse> documentComponents) {
+            List<LineResponse> lines = quote.getLines().stream()
+                    .map(line -> LineResponse.from(line,
+                            lineComponents.getOrDefault(line.getId(), List.of())))
+                    .toList();
             return new Response(quote.getId(), quote.getNumber(), quote.getStatus().name(), customer, location,
                     quote.getIssueDate(), quote.getValidUntil(), quote.getCurrency(), quote.getNotes(),
                     quote.getSubtotal(), quote.getDiscountAmount(), quote.getTaxAmount(), quote.getTotal(),
-                    quote.getConvertedJobId(), quote.getLines().stream().map(LineResponse::from).toList(),
-                    quote.getVersion(), quote.getCreatedAt(), quote.getUpdatedAt());
+                    quote.getConvertedJobId(), quote.getLegalEntityId(), quote.getTaxProfileName(),
+                    quote.getTaxMode(), quote.getFxRate(), quote.getBaseCurrency(), quote.getBaseTotal(),
+                    documentComponents, lines, quote.getVersion(), quote.getCreatedAt(), quote.getUpdatedAt());
         }
     }
 }

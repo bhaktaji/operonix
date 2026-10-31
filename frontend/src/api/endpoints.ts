@@ -130,6 +130,7 @@ export interface ServiceInput {
   basePrice: number;
   durationMinutes: number;
   taxRate: number;
+  taxProfileId?: string | null;
   active: boolean;
 }
 

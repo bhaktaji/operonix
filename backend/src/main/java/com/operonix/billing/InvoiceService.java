@@ -16,6 +16,10 @@ import com.operonix.customer.CustomerService;
 import com.operonix.customer.dto.CustomerDtos;
 import com.operonix.document.DocumentNumberService;
 import com.operonix.document.DocumentType;
+import com.operonix.finance.FinanceDtos;
+import com.operonix.finance.FinanceService;
+import com.operonix.finance.TaxService;
+import com.operonix.finance.TaxSnapshotWriter;
 import com.operonix.quoting.QuoteService;
 import com.operonix.scheduling.JobService;
 import com.operonix.security.CurrentUser;
@@ -66,11 +70,13 @@ public class InvoiceService {
     private final AuditService audit;
     private final CurrentUser currentUser;
     private final OperonixProperties properties;
+    private final FinanceService finance;
+    private final TaxSnapshotWriter taxSnapshots;
 
     public InvoiceService(InvoiceRepository invoices, PaymentRepository payments, CustomerService customers,
                           CatalogService catalog, QuoteService quotes, JobService jobs, TenantService tenants,
                           DocumentNumberService numbers, AuditService audit, CurrentUser currentUser,
-                          OperonixProperties properties) {
+                          OperonixProperties properties, FinanceService finance, TaxSnapshotWriter taxSnapshots) {
         this.invoices = invoices;
         this.payments = payments;
         this.customers = customers;
@@ -82,6 +88,8 @@ public class InvoiceService {
         this.audit = audit;
         this.currentUser = currentUser;
         this.properties = properties;
+        this.finance = finance;
+        this.taxSnapshots = taxSnapshots;
     }
 
     // ------------------------------------------------------------------------ reads
@@ -147,7 +155,8 @@ public class InvoiceService {
         ResolvedLines resolved = resolveLines(tenantId, context, request.lines());
 
         Invoice invoice = persist(tenant, customer, request.jobId(), request.issueDate(), request.dueDate(),
-                request.notes(), resolved.lines(), discountOrDefault(request.discountAmount(), resolved));
+                request.currency(), request.notes(), resolved.lines(),
+                discountOrDefault(request.discountAmount(), resolved));
         audit.record(AuditAction.INVOICE_CREATED, "Invoice", invoice.getId(),
                 Map.of("number", invoice.getNumber(), "total", invoice.getTotal(),
                         "customerId", customer.getId().toString()));
@@ -165,7 +174,7 @@ public class InvoiceService {
         ResolvedLines resolved = resolveLines(tenantId, context, request.lines());
         String notes = request.notes() == null || request.notes().isBlank() ? context.notes() : request.notes();
 
-        Invoice invoice = persist(tenant, customer, jobId, null, request.dueDate(), notes, resolved.lines(),
+        Invoice invoice = persist(tenant, customer, jobId, null, request.dueDate(), null, notes, resolved.lines(),
                 discountOrDefault(request.discountAmount(), resolved));
         audit.record(AuditAction.INVOICE_CREATED, "Invoice", invoice.getId(),
                 Map.of("number", invoice.getNumber(), "jobId", jobId.toString(),
@@ -194,7 +203,10 @@ public class InvoiceService {
         if (lines.isEmpty()) {
             throw ApiException.validation("lines", "an invoice needs at least one line");
         }
-        applyPricing(tenantId, invoice, lines, request.discountAmount());
+        FinanceService.DocumentSetup setup = finance.prepare(tenantId, tenants.require(tenantId),
+                invoice.getCurrency(), issueDate);
+        applyPricing(tenantId, invoice, lines, request.discountAmount(), setup);
+        writeTaxSnapshots(invoice);
         audit.record(AuditAction.INVOICE_CREATED, "Invoice", invoice.getId(),
                 Map.of("number", invoice.getNumber(), "updated", true));
         return toResponses(List.of(invoice)).getFirst();
@@ -261,6 +273,9 @@ public class InvoiceService {
         payment.setRecordedBy(currentUser.id());
         invoice.addPayment(payment);
         invoice.setAmountPaid(MoneyCalculator.money(invoice.getAmountPaid().add(amount)));
+        int baseScale = finance.precision(invoice.getBaseCurrency());
+        invoice.setBaseAmountPaid(MoneyCalculator.money(
+                invoice.getBaseAmountPaid().add(amount.multiply(invoice.getFxRate())), baseScale));
         recomputeStatus(invoice, priorStatus);
 
         audit.record(AuditAction.PAYMENT_RECORDED, "Payment", payment.getId(),
@@ -277,6 +292,9 @@ public class InvoiceService {
         InvoiceStatus priorStatus = invoice.getStatus();
         invoice.getPayments().remove(payment);
         invoice.setAmountPaid(MoneyCalculator.money(invoice.getAmountPaid().subtract(payment.getAmount())));
+        int baseScale = finance.precision(invoice.getBaseCurrency());
+        invoice.setBaseAmountPaid(MoneyCalculator.money(invoice.getBaseAmountPaid()
+                .subtract(payment.getAmount().multiply(invoice.getFxRate())), baseScale));
         recomputeStatus(invoice, priorStatus);
         audit.record(AuditAction.PAYMENT_REVERSED, "Payment", paymentId,
                 Map.of("invoiceId", invoiceId.toString(), "amount", payment.getAmount()));
@@ -286,15 +304,14 @@ public class InvoiceService {
     // -------------------------------------------------------------------- internals
 
     private Invoice persist(Tenant tenant, Customer customer, UUID jobId, LocalDate requestedIssue,
-                            LocalDate requestedDue, String notes, List<InvoiceDtos.LineRequest> lines,
-                            BigDecimal discount) {
+                            LocalDate requestedDue, String requestedCurrency, String notes,
+                            List<InvoiceDtos.LineRequest> lines, BigDecimal discount) {
         UUID tenantId = tenant.getId();
         Invoice invoice = new Invoice();
         invoice.setTenantId(tenantId);
         invoice.setCustomerId(customer.getId());
         invoice.setJobId(jobId);
         invoice.setStatus(InvoiceStatus.DRAFT);
-        invoice.setCurrency(tenant.getCurrency());
         invoice.setNotes(trimToNull(notes));
         invoice.setCreatedBy(currentUser.id());
 
@@ -306,9 +323,22 @@ public class InvoiceService {
         invoice.setIssueDate(issueDate);
         invoice.setDueDate(dueDate);
 
-        applyPricing(tenantId, invoice, lines, discount);
-        invoice.setNumber(numbers.next(tenantId, DocumentType.INVOICE, issueDate.getYear()));
-        return invoices.save(invoice);
+        FinanceService.DocumentSetup setup = finance.prepare(tenantId, tenant, requestedCurrency, issueDate);
+        invoice.setCurrency(setup.currency());
+        invoice.setLegalEntityId(setup.legalEntityId());
+        invoice.setTaxProfileId(setup.taxProfileId());
+        invoice.setTaxProfileName(setup.taxProfileName());
+        invoice.setTaxMode(setup.taxMode().name());
+        invoice.setTaxNumber(setup.legalEntityTaxNumber());
+        invoice.setBaseCurrency(setup.baseCurrency());
+        invoice.setFxRate(setup.fxRate());
+
+        applyPricing(tenantId, invoice, lines, discount, setup);
+        invoice.setNumber(numbers.next(tenantId, DocumentType.INVOICE, issueDate.getYear(),
+                setup.legalEntityId()));
+        Invoice saved = invoices.save(invoice);
+        writeTaxSnapshots(invoice);
+        return saved;
     }
 
     private record ResolvedLines(List<InvoiceDtos.LineRequest> lines, BigDecimal discountAmount) {
@@ -343,7 +373,7 @@ public class InvoiceService {
     }
 
     private void applyPricing(UUID tenantId, Invoice invoice, List<InvoiceDtos.LineRequest> requested,
-                              BigDecimal requestedDiscount) {
+                              BigDecimal requestedDiscount, FinanceService.DocumentSetup setup) {
         List<InvoiceDtos.LineRequest> lines = requested == null ? List.of() : requested;
         List<MoneyCalculator.Line> input = new ArrayList<>(lines.size());
         for (int i = 0; i < lines.size(); i++) {
@@ -361,17 +391,19 @@ public class InvoiceService {
                 throw ApiException.validation("lines[" + i + "].unitPrice",
                         "is required when no catalog service is selected");
             }
-            BigDecimal taxRate = line.taxRate() != null ? line.taxRate()
+            BigDecimal fallbackRate = line.taxRate() != null ? line.taxRate()
                     : item == null ? null : item.getTaxRate();
-            if (taxRate == null) {
+            UUID profileId = item == null ? null : item.getTaxProfileId();
+            if (fallbackRate == null && profileId == null) {
                 throw ApiException.validation("lines[" + i + "].taxRate",
                         "is required when no catalog service is selected");
             }
+            TaxService.LineTax tax = finance.lineTax(tenantId, profileId, fallbackRate, setup.taxMode());
             input.add(new MoneyCalculator.Line(line.serviceItemId(), description, line.quantity(),
-                    unitPrice, taxRate));
+                    unitPrice, tax.rate(), tax.components(), tax.mode()));
         }
 
-        MoneyCalculator.Totals totals = MoneyCalculator.calculate(input, requestedDiscount);
+        MoneyCalculator.Totals totals = MoneyCalculator.calculate(input, requestedDiscount, setup.scale());
         if (requestedDiscount != null && requestedDiscount.compareTo(totals.subtotal()) > 0) {
             throw ApiException.validation("discountAmount", "cannot exceed the invoice subtotal");
         }
@@ -379,6 +411,8 @@ public class InvoiceService {
         invoice.setDiscountAmount(totals.discountAmount());
         invoice.setTaxAmount(totals.taxAmount());
         invoice.setTotal(totals.total());
+        invoice.setTaxMode(setup.taxMode().name());
+        invoice.setBaseTotal(finance.toBase(totals.total(), setup));
 
         List<InvoiceLine> existing = invoice.getLines();
         List<MoneyCalculator.PricedLine> priced = totals.lines();
@@ -398,6 +432,7 @@ public class InvoiceService {
             line.setLineSubtotal(source.lineSubtotal());
             line.setLineTax(source.lineTax());
             line.setLineTotal(source.lineTotal());
+            line.setTaxComponents(source.components());
         }
         while (existing.size() > priced.size()) {
             existing.removeLast();
@@ -461,12 +496,59 @@ public class InvoiceService {
         Map<UUID, List<Payment>> paymentsByInvoice = payments
                 .findAllByTenantIdAndInvoiceIdInOrderByPaidAtAsc(tenantId, ids).stream()
                 .collect(Collectors.groupingBy(payment -> payment.getInvoice().getId()));
+        List<UUID> lineIds = list.stream().flatMap(invoice -> invoice.getLines().stream())
+                .map(InvoiceLine::getId).toList();
+        Map<UUID, List<FinanceDtos.TaxAmountResponse>> rows = taxSnapshots.read(tenantId,
+                TaxSnapshotWriter.INVOICE, lineIds);
+
         List<InvoiceDtos.Response> responses = new ArrayList<>(list.size());
         for (Invoice invoice : list) {
+            Map<UUID, List<FinanceDtos.TaxAmountResponse>> forInvoice = new LinkedHashMap<>();
+            invoice.getLines().forEach(line -> {
+                List<FinanceDtos.TaxAmountResponse> values = rows.get(line.getId());
+                if (values != null) {
+                    forInvoice.put(line.getId(), values);
+                }
+            });
             responses.add(InvoiceDtos.Response.from(invoice, summaries.get(invoice.getCustomerId()),
-                    paymentsByInvoice.getOrDefault(invoice.getId(), List.of()), isOverdue(invoice, today)));
+                    paymentsByInvoice.getOrDefault(invoice.getId(), List.of()), isOverdue(invoice, today),
+                    forInvoice, aggregate(forInvoice, invoice.getTotal(), invoice.getTaxAmount())));
         }
         return responses;
+    }
+
+    /** Persists printed tax rows once the lines have identifiers, inside the document transaction. */
+    private void writeTaxSnapshots(Invoice invoice) {
+        invoices.flush();
+        Map<UUID, List<MoneyCalculator.TaxComponentAmount>> byLine = new LinkedHashMap<>();
+        for (InvoiceLine line : invoice.getLines()) {
+            if (line.getTaxComponents() != null && !line.getTaxComponents().isEmpty()) {
+                byLine.put(line.getId(), line.getTaxComponents());
+            }
+        }
+        taxSnapshots.replace(invoice.getTenantId(), TaxSnapshotWriter.INVOICE, byLine);
+    }
+
+    private static List<FinanceDtos.TaxAmountResponse> aggregate(
+            Map<UUID, List<FinanceDtos.TaxAmountResponse>> lineComponents, BigDecimal total,
+            BigDecimal taxAmount) {
+        Map<String, FinanceDtos.TaxAmountResponse> byCode = new LinkedHashMap<>();
+        lineComponents.values().forEach(rows -> rows.forEach(row -> {
+            FinanceDtos.TaxAmountResponse existing = byCode.get(row.code());
+            byCode.put(row.code(), existing == null ? row
+                    : new FinanceDtos.TaxAmountResponse(existing.code(), existing.name(), existing.rate(),
+                    existing.base().add(row.base()), existing.amount().add(row.amount())));
+        }));
+        if (!byCode.isEmpty()) {
+            return List.copyOf(byCode.values());
+        }
+        if (taxAmount == null || taxAmount.signum() == 0) {
+            return List.of();
+        }
+        BigDecimal base = total == null ? BigDecimal.ZERO : total.subtract(taxAmount);
+        BigDecimal rate = base.signum() == 0 ? BigDecimal.ZERO
+                : taxAmount.divide(base, 4, java.math.RoundingMode.HALF_UP);
+        return List.of(new FinanceDtos.TaxAmountResponse("TAX", "Tax", rate, base, taxAmount));
     }
 
     private boolean isOverdue(Invoice invoice, LocalDate today) {

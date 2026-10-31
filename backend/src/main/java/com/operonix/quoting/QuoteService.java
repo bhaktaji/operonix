@@ -16,6 +16,10 @@ import com.operonix.customer.ServiceLocation;
 import com.operonix.customer.dto.CustomerDtos;
 import com.operonix.document.DocumentNumberService;
 import com.operonix.document.DocumentType;
+import com.operonix.finance.FinanceDtos;
+import com.operonix.finance.FinanceService;
+import com.operonix.finance.TaxService;
+import com.operonix.finance.TaxSnapshotWriter;
 import com.operonix.quoting.dto.QuoteDtos;
 import com.operonix.security.CurrentUser;
 import com.operonix.tenancy.Tenant;
@@ -53,10 +57,13 @@ public class QuoteService {
     private final AuditService audit;
     private final CurrentUser currentUser;
     private final OperonixProperties properties;
+    private final FinanceService finance;
+    private final TaxSnapshotWriter taxSnapshots;
 
     public QuoteService(QuoteRepository quotes, CustomerService customers, CatalogService catalog,
                         TenantService tenants, DocumentNumberService numbers, AuditService audit,
-                        CurrentUser currentUser, OperonixProperties properties) {
+                        CurrentUser currentUser, OperonixProperties properties, FinanceService finance,
+                        TaxSnapshotWriter taxSnapshots) {
         this.quotes = quotes;
         this.customers = customers;
         this.catalog = catalog;
@@ -65,6 +72,8 @@ public class QuoteService {
         this.audit = audit;
         this.currentUser = currentUser;
         this.properties = properties;
+        this.finance = finance;
+        this.taxSnapshots = taxSnapshots;
     }
 
     @Transactional
@@ -131,9 +140,19 @@ public class QuoteService {
         quote.setIssueDate(issueDate);
         quote.setValidUntil(validUntil);
 
-        applyPricing(tenantId, quote, request.lines(), request.discountAmount());
-        quote.setNumber(numbers.next(tenantId, DocumentType.QUOTE, issueDate.getYear()));
+        FinanceService.DocumentSetup setup = finance.prepare(tenantId, tenant, request.currency(), issueDate);
+        quote.setCurrency(setup.currency());
+        quote.setLegalEntityId(setup.legalEntityId());
+        quote.setTaxProfileId(setup.taxProfileId());
+        quote.setTaxProfileName(setup.taxProfileName());
+        quote.setTaxMode(setup.taxMode().name());
+        quote.setBaseCurrency(setup.baseCurrency());
+        quote.setFxRate(setup.fxRate());
+
+        applyPricing(tenantId, quote, request.lines(), request.discountAmount(), setup);
+        quote.setNumber(numbers.next(tenantId, DocumentType.QUOTE, issueDate.getYear(), setup.legalEntityId()));
         quotes.save(quote);
+        writeTaxSnapshots(quote);
 
         audit.record(AuditAction.QUOTE_CREATED, "Quote", quote.getId(),
                 Map.of("number", quote.getNumber(), "total", quote.getTotal(), "customerId", customer.getId()));
@@ -161,7 +180,10 @@ public class QuoteService {
         quote.setIssueDate(issueDate);
         quote.setValidUntil(validUntil);
 
-        applyPricing(tenantId, quote, request.lines(), request.discountAmount());
+        // A draft keeps the currency and rate it was created with; only the amounts may change.
+        FinanceService.DocumentSetup setup = finance.prepare(tenantId, tenant, quote.getCurrency(), issueDate);
+        applyPricing(tenantId, quote, request.lines(), request.discountAmount(), setup);
+        writeTaxSnapshots(quote);
         audit.record(AuditAction.QUOTE_UPDATED, "Quote", quote.getId(),
                 Map.of("number", quote.getNumber(), "total", quote.getTotal()));
         return detail(quote);
@@ -280,7 +302,7 @@ public class QuoteService {
     // ------------------------------------------------------------------ internals
 
     private void applyPricing(UUID tenantId, Quote quote, List<QuoteDtos.LineRequest> requested,
-                              BigDecimal requestedDiscount) {
+                              BigDecimal requestedDiscount, FinanceService.DocumentSetup setup) {
         List<QuoteDtos.LineRequest> lines = requested == null ? List.of() : requested;
         List<MoneyCalculator.Line> input = new ArrayList<>(lines.size());
         for (int i = 0; i < lines.size(); i++) {
@@ -303,18 +325,21 @@ public class QuoteService {
                 throw ApiException.validation("lines[" + i + "].unitPrice",
                         "is required when no catalog service is selected");
             }
-            BigDecimal taxRate = line.taxRate() != null
+            BigDecimal fallbackRate = line.taxRate() != null
                     ? line.taxRate()
                     : item == null ? null : item.getTaxRate();
-            if (taxRate == null) {
+            UUID profileId = item == null ? null : item.getTaxProfileId();
+            if (fallbackRate == null && profileId == null) {
                 throw ApiException.validation("lines[" + i + "].taxRate",
                         "is required when no catalog service is selected");
             }
+            // A catalog item with a profile wins: its components define the rate and the mode.
+            TaxService.LineTax tax = finance.lineTax(tenantId, profileId, fallbackRate, setup.taxMode());
             input.add(new MoneyCalculator.Line(line.serviceItemId(), description, line.quantity(),
-                    unitPrice, taxRate));
+                    unitPrice, tax.rate(), tax.components(), tax.mode()));
         }
 
-        MoneyCalculator.Totals totals = MoneyCalculator.calculate(input, requestedDiscount);
+        MoneyCalculator.Totals totals = MoneyCalculator.calculate(input, requestedDiscount, setup.scale());
         if (requestedDiscount != null && requestedDiscount.compareTo(totals.subtotal()) > 0) {
             throw ApiException.validation("discountAmount", "cannot exceed the quote subtotal");
         }
@@ -322,6 +347,8 @@ public class QuoteService {
         quote.setDiscountAmount(totals.discountAmount());
         quote.setTaxAmount(totals.taxAmount());
         quote.setTotal(totals.total());
+        quote.setTaxMode(setup.taxMode().name());
+        quote.setBaseTotal(finance.toBase(totals.total(), setup));
 
         List<QuoteLine> existing = quote.getLines();
         List<MoneyCalculator.PricedLine> priced = totals.lines();
@@ -341,6 +368,7 @@ public class QuoteService {
             line.setLineSubtotal(source.lineSubtotal());
             line.setLineTax(source.lineTax());
             line.setLineTotal(source.lineTotal());
+            line.setTaxComponents(source.components());
         }
         while (existing.size() > priced.size()) {
             existing.remove(existing.size() - 1);
@@ -365,7 +393,50 @@ public class QuoteService {
         CustomerDtos.LocationResponse location = quote.getLocationId() == null ? null
                 : customers.locationResponse(customers.requireLocation(tenantId, quote.getCustomerId(),
                 quote.getLocationId()));
-        return QuoteDtos.Response.from(quote, customer, location);
+        Map<UUID, List<FinanceDtos.TaxAmountResponse>> lineComponents = taxSnapshots.read(tenantId,
+                TaxSnapshotWriter.QUOTE, quote.getLines().stream().map(QuoteLine::getId).toList());
+        return QuoteDtos.Response.from(quote, customer, location, lineComponents,
+                aggregate(lineComponents, quote.getTotal(), quote.getTaxAmount()));
+    }
+
+    /**
+     * Persists the printed tax rows once the lines have identifiers. Runs after the insert so the
+     * snapshot belongs to real rows, and inside the caller's transaction so a failed quote leaves no
+     * orphan components behind.
+     */
+    private void writeTaxSnapshots(Quote quote) {
+        quotes.flush();
+        Map<UUID, List<MoneyCalculator.TaxComponentAmount>> byLine = new LinkedHashMap<>();
+        for (QuoteLine line : quote.getLines()) {
+            if (line.getTaxComponents() != null && !line.getTaxComponents().isEmpty()) {
+                byLine.put(line.getId(), line.getTaxComponents());
+            }
+        }
+        taxSnapshots.replace(quote.getTenantId(), TaxSnapshotWriter.QUOTE, byLine);
+    }
+
+    /** Rolls per-line rows up to the document summary shown above the totals. */
+    static List<FinanceDtos.TaxAmountResponse> aggregate(
+            Map<UUID, List<FinanceDtos.TaxAmountResponse>> lineComponents, BigDecimal total,
+            BigDecimal taxAmount) {
+        Map<String, FinanceDtos.TaxAmountResponse> byCode = new LinkedHashMap<>();
+        lineComponents.values().forEach(rows -> rows.forEach(row -> {
+            FinanceDtos.TaxAmountResponse existing = byCode.get(row.code());
+            byCode.put(row.code(), existing == null ? row
+                    : new FinanceDtos.TaxAmountResponse(existing.code(), existing.name(), existing.rate(),
+                    existing.base().add(row.base()), existing.amount().add(row.amount())));
+        }));
+        if (!byCode.isEmpty()) {
+            return List.copyOf(byCode.values());
+        }
+        // Documents created before P1a have no component rows; one synthetic row keeps the UI uniform.
+        if (taxAmount == null || taxAmount.signum() == 0) {
+            return List.of();
+        }
+        BigDecimal base = total == null ? BigDecimal.ZERO : total.subtract(taxAmount);
+        BigDecimal rate = base.signum() == 0 ? BigDecimal.ZERO
+                : taxAmount.divide(base, 4, java.math.RoundingMode.HALF_UP);
+        return List.of(new FinanceDtos.TaxAmountResponse("TAX", "Tax", rate, base, taxAmount));
     }
 
     private void materialiseExpiry(Quote quote, String timezone) {

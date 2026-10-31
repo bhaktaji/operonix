@@ -14,6 +14,7 @@ import org.hibernate.annotations.UpdateTimestamp;
 
 import java.math.BigDecimal;
 import java.time.Instant;
+import java.util.UUID;
 
 @Entity
 @Table(name = "service_item")
@@ -38,8 +39,13 @@ public class ServiceItem extends TenantEntity {
     @Column(name = "duration_minutes", nullable = false)
     private int durationMinutes;
 
+    /** Deprecated single rate: kept so every pre-P1a item and API response stays valid. */
     @Column(name = "tax_rate", nullable = false, precision = 5, scale = 4)
     private BigDecimal taxRate;
+
+    /** Preferred path: a tenant tax profile, whose components replace {@code taxRate} when set. */
+    @Column(name = "tax_profile_id")
+    private UUID taxProfileId;
 
     @Column(name = "active", nullable = false)
     private boolean active = true;

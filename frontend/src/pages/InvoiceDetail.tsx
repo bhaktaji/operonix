@@ -255,7 +255,22 @@ export function InvoiceDetail() {
               {data.discountAmount > 0 && (
                 <div className="flex justify-between"><dt className="text-ink-500">Discount</dt><dd className="font-medium text-brand-700">−{formatMoney(data.discountAmount, data.currency)}</dd></div>
               )}
-              <div className="flex justify-between"><dt className="text-ink-500">Tax</dt><dd className="font-medium text-ink-900">{formatMoney(data.taxAmount, data.currency)}</dd></div>
+              {(data.taxComponents ?? []).length > 0 ? (
+                (data.taxComponents ?? []).map((component) => (
+                  <div key={component.code} className="flex justify-between">
+                    <dt className="text-ink-500">
+                      {component.name}
+                      <span className="ml-1 text-[11px] text-ink-400">{(component.rate * 100).toFixed(2)}%</span>
+                    </dt>
+                    <dd className="font-medium text-ink-900">{formatMoney(component.amount, data.currency)}</dd>
+                  </div>
+                ))
+              ) : (
+                <div className="flex justify-between"><dt className="text-ink-500">Tax</dt><dd className="font-medium text-ink-900">{formatMoney(data.taxAmount, data.currency)}</dd></div>
+              )}
+              {data.taxMode === "INCLUSIVE" && (
+                <p className="text-[11px] text-ink-400">Prices include tax.</p>
+              )}
               <div className="flex justify-between border-t border-sand-200 pt-2.5">
                 <dt className="font-medium text-ink-900">Total</dt>
                 <dd className="font-display text-lg font-semibold text-ink-950">{formatMoney(data.total, data.currency)}</dd>
@@ -266,6 +281,12 @@ export function InvoiceDetail() {
                 <dd className="font-display text-2xl font-semibold text-ink-950">{formatMoney(data.balance, data.currency)}</dd>
               </div>
             </dl>
+            {data.baseCurrency && data.baseCurrency !== data.currency && data.baseTotal !== undefined && (
+              <p className="mt-3 border-t border-sand-200 pt-2.5 text-[12px] text-ink-500">
+                {formatMoney(data.baseTotal, data.baseCurrency)} in {data.baseCurrency}
+                <span className="text-ink-400"> · rate {data.fxRate}</span>
+              </p>
+            )}
             {data.paidAt && (
               <p className="mt-3 text-[12px] text-ink-400">Paid in full {formatDateTime(data.paidAt, tenant?.timezone)}</p>
             )}

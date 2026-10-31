@@ -700,3 +700,56 @@ No table, constraint, index or type changes were required by the deployment work
 - Connection capacity is a deployment concern, not a schema one: each Cloud Run instance holds
   `OPERONIX_DB_POOL` (default 5) connections, and `max_instances × pool + 1 ≤ max_connections`.
   `/cloudsql` socket access needs no schema or network grants beyond `roles/cloudsql.client`.
+
+---
+
+## 9. P1a — global financial foundation (V3)
+
+All of V3 is **additive**: new tables, new nullable/defaulted columns, and backfills that reproduce the
+previous values exactly. No V1/V2 row is rewritten destructively and no historical document is
+recalculated.
+
+### 9.1 Platform-owned tax catalogue
+
+| Table | Columns | Notes |
+| --- | --- | --- |
+| `tax_definition` | `id`, `country_code` (nullable = global), `code` UNIQUE, `name`, `mode`, `rounding`, `effective_from`, `effective_to`, `active` | The jurisdictional container: `IN-GST-18`, `GB-VAT-20`, `JP-CT-10`, `US-CA-SALES-825`, `GLOBAL-EXEMPT`, … 12 seeded rows. `mode` is `EXCLUSIVE`/`INCLUSIVE`. |
+| `tax_component` | `id`, `tax_definition_id` FK CASCADE, `code`, `name`, `rate numeric(7,5)`, `compound`, `position`; UNIQUE `(tax_definition_id, code)` | Lets `CGST 9% + SGST 9%` print as two rows without new columns. |
+
+`tax_definition` is data, not code: adding a jurisdiction is an insert. Business logic only reads a
+profile, never a definition.
+
+### 9.2 Tenant configuration
+
+| Table | Key columns | Rules |
+| --- | --- | --- |
+| `legal_entity` | `id`, `tenant_id`, `name`, `country_code` FK, `tax_number`, `tax_number_label`, `base_currency` FK, `tax_mode`, `address jsonb`, `is_default`, `active` | Unique partial index `uq_legal_entity_default` enforces one default per workspace. Documents snapshot `id` and `tax_number`. |
+| `business_location` | `id`, `tenant_id`, `legal_entity_id` FK, `name`, `country_code`, `timezone`, `address jsonb`, `is_default`, `active` | An operational site, distinct from `service_location` (a customer's address). |
+| `tax_profile` | `id`, `tenant_id`, `legal_entity_id`, `name`, `tax_definition_id`, `mode` (null = inherit), `is_default`, `active` | Unique partial index for the default; `service_item.tax_profile_id` points here. |
+| `tenant_settings` | `tenant_id` PK, `locale`, `week_start`, `fiscal_year_start_month`, `default_tax_profile_id`, `default_legal_entity_id`, `date_format`, `number_format` | 1:1 with `tenant`; keeps `tenant` itself stable. |
+| `document_number_rule` | `id`, `tenant_id`, `legal_entity_id` (nullable), `doc_type`, `prefix`, `include_year`, `padding`, `reset_policy` | Backfilled to reproduce `Q-YYYY-0001` / `J-…` / `INV-…` exactly. |
+| `exchange_rate` | `id`, `base`, `quote`, `rate numeric(18,8)`, `as_of`, `source`; UNIQUE `(base, quote, as_of)` | Dated rates; `base <> quote` and `rate > 0`. Lookup uses the newest row `as_of <= document date`, and the inverse pair is derived. |
+
+### 9.3 Document snapshots
+
+`quote` and `invoice` gained `legal_entity_id`, `tax_profile_id`, `tax_profile_name`, `tax_mode`,
+`fx_rate numeric(18,8)` (CHECK > 0), `base_currency` and `base_total`; `invoice` also gained
+`tax_number`, `reverse_charge` and `base_amount_paid`. Backfill: `fx_rate = 1`,
+`base_currency = currency`, `base_total = total`, `base_amount_paid = amount_paid` — every pre-P1a
+document keeps its exact economics.
+
+| Table | Columns | Notes |
+| --- | --- | --- |
+| `line_tax_component` | `id`, `tenant_id`, `line_type` (`QUOTE`/`INVOICE`), `line_id`, `tax_component_id`, `code`, `name`, `base`, `rate`, `amount`, `position` | One row per printed tax row per line, written when a document is priced and never updated. Polymorphic `line_id` avoids two near-identical tables. |
+
+Indexes: `ix_line_tax_component_line (line_type, line_id)`, `ix_line_tax_component_tenant`.
+
+### 9.4 Delete behaviour and integrity
+
+- `legal_entity` and `business_location` are **retired** (`active = false`), never deleted, because
+  documents reference them; the API refuses to remove a default or an entity that still owns locations.
+- `tax_profile` deactivation is likewise soft; a default profile cannot be deactivated as the only one.
+- Money columns remain `numeric(12,2)`: JPY (0 dp) and KWD (3 dp) are handled by the currency's
+  `minor_units` at calculation and formatting time, so no column rewrite is needed for the seeded
+  markets.
+- Compound tax components are summed rather than compounded; every seeded jurisdiction is additive.

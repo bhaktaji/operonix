@@ -811,3 +811,85 @@ render from it. See [FRONTEND_GLOBALIZATION.md](FRONTEND_GLOBALIZATION.md) for t
 - `country.postal_code_regex` is stored but not enforced on customer addresses, to avoid rejecting
   legitimate international formats before address handling is redesigned.
 - Only English copy is catalogued; `locale` currently changes formatting, not language.
+
+---
+
+## 18. P1a — global financial foundation (implemented)
+
+### 18.1 Module map
+
+New `com.operonix.finance` module, plus a rule-driven `com.operonix.document` addition:
+
+| Class | Responsibility |
+| --- | --- |
+| `FinanceService` | Builds the immutable `DocumentSetup` (entity, currency + precision, tax profile + mode, base currency, FX rate) that quoting and billing snapshot before pricing. |
+| `TaxService` | Lists the platform catalogue, owns tenant tax profiles, resolves `LineTax` (rate, components, mode) for a line, and exposes currency precision. |
+| `OrganisationService` | Legal entities, business locations and `tenant_settings`. |
+| `ExchangeRateService` | Dated rate lookup (direct, inverse, identity) and conversion. |
+| `TaxSnapshotWriter` | Writes and reads `line_tax_component` rows for a document. |
+| `WorkspaceFinanceBootstrap` | Seeds entity, country-default tax profile, settings row and "Main location" for a new workspace, driven by `WorkspaceProvisionedEvent` so `tenancy` never imports `finance`. |
+| `DocumentNumberService` | Formats numbers from `document_number_rule`; the default reproduces v1 exactly. |
+
+### 18.2 Money rules
+
+- **Scale comes from the currency.** `MoneyCalculator.calculate(lines, discount, scale)` where `scale =
+  currency.minor_units`: JPY 0, USD/INR/EUR 2, KWD 3. The two-argument overload keeps 2 dp for legacy
+  callers. All arithmetic is `BigDecimal` with `HALF_UP`.
+- **Exclusive vs inclusive.** Inclusive derives the net as `gross / (1 + Σrate)` rounded at the currency
+  scale and the tax as `gross − net`, so the entered gross is exactly the total. Exclusive adds
+  `round(net × Σrate)` on top.
+- **Discount** is clamped to the subtotal, then the tax is scaled by `(subtotal − discount) / subtotal`
+  (6 dp) exactly as before, so pre-P1a outputs are bit-identical (characterization tests in
+  `MoneyCalculatorTest` were kept unchanged).
+- **Components.** Each line's discounted tax is allocated per component and reconciled into the last
+  taxable row; the document total is the roll-up of those rows, reconciled again. Printed rows always
+  sum to `taxAmount`.
+- **Compound components are summed**, not compounded; all seeded jurisdictions are additive.
+
+### 18.3 Document snapshots
+
+A quote or invoice stores the entity, profile name, tax mode, currency, `fx_rate`, `base_currency`,
+`base_total` (and for invoices `tax_number`, `reverse_charge`, `base_amount_paid`) at creation. Pricing
+never re-reads configuration afterwards: changing a profile, rate, or numbering rule cannot alter an
+issued document. `base_amount_paid` moves with each payment and reversal at the snapshotted rate.
+
+### 18.4 API surface (all tenant-scoped, `Authorization: Bearer`)
+
+| Method + path | Roles | Notes |
+| --- | --- | --- |
+| `GET /api/v1/tax/definitions` | any member | Platform catalogue with components. |
+| `GET/POST/PUT/DELETE /api/v1/tax/profiles[/{id}]` | read: any, write: OWNER/ADMIN | Delete deactivates; a default profile cannot be removed. |
+| `GET/POST/PUT/DELETE /api/v1/legal-entities[/{id}]` | read: any, write: OWNER/ADMIN | Retires instead of deleting; default is unique per workspace. |
+| `GET/POST/PUT/DELETE /api/v1/business-locations[/{id}]` | read: any, write: OWNER/ADMIN | Requires an entity; timezone validated against IANA. |
+| `GET/PUT /api/v1/workspace/financial-settings` | read: any, write: OWNER/ADMIN | Locale, fiscal year, defaults; returns `currencyPrecision`. |
+| `GET /api/v1/number-rules`, `PUT /api/v1/number-rules/{docType}` | read: any, write: OWNER/ADMIN | `prefix` matches `^[A-Za-z0-9/_-]{1,12}$`, padding 1–10. |
+| `GET/POST /api/v1/exchange-rates` | read: any, write: OWNER/ADMIN | Unique per `(base, quote, asOf)`; `base ≠ quote`. |
+
+Quote/invoice create accepts an optional `currency`; the document is issued in it and converted to the
+entity's base currency at that day's rate. A missing rate fails with
+`422 FX_RATE_MISSING` naming the pair — never a silent 1:1 conversion.
+
+### 18.5 Validation and error handling
+
+- `countryCode` must exist in `country`; `baseCurrency`/`currency` must exist in `currency`.
+- Duplicate entity, location or profile names (case-insensitive, per tenant) → `400 VALIDATION_FAILED`.
+- Two defaults (entity, location, profile) → `409 CONFLICT`; removing the current default → `409`.
+- Removing an entity that still has locations → `409`; every cross-tenant id → `404` (never `403`, so
+  ids cannot be probed).
+- Tax component rates, FX rates and discounts are validated by `CHECK` constraints as well as the DTOs.
+
+### 18.6 Security and tenancy
+
+- Every repository call is `...AndTenantId`; `TenantEntity`'s pre-persist guard still rejects a
+  cross-tenant write. Integration tests cover reading and updating another tenant's entity.
+- `tax_definition`/`tax_component`/`currency`/`country` are platform read-only reference data.
+- No secrets, keys or credentials are introduced by P1a.
+
+### 18.7 Deviations from the roadmap wording
+
+- P1a-7 (country-aware address model) and P1a-8 (fiscal-year *rendering*) are partially delivered:
+  `address_format`/postal validation remain unenforced, and the fiscal-year setting is stored but not
+  yet used by reports.
+- P1a-9 (payment reversals as `payment_reversal` rows) keeps the existing delete-the-payment behaviour
+  and adds base-currency tracking; the immutable reversal ledger remains a P1b item.
+- P1a-10 (payment gateway abstraction) was not started, as approved.

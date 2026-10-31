@@ -15,6 +15,7 @@ import { InvoiceDetail } from "@/pages/InvoiceDetail";
 import { Catalog } from "@/pages/Catalog";
 import { Team } from "@/pages/Team";
 import { Settings } from "@/pages/Settings";
+import { FinanceSettings } from "@/pages/FinanceSettings";
 import { AuditLog } from "@/pages/AuditLog";
 import { NotFound } from "@/pages/NotFound";
 
@@ -47,6 +48,7 @@ export function App() {
           <Route path="catalog" element={<Catalog />} />
           <Route path="team" element={<RoleGate allow={ADMIN}><Team /></RoleGate>} />
           <Route path="settings" element={<RoleGate allow={ADMIN}><Settings /></RoleGate>} />
+          <Route path="settings/financial" element={<RoleGate allow={ADMIN}><FinanceSettings /></RoleGate>} />
           <Route path="audit" element={<RoleGate allow={ADMIN}><AuditLog /></RoleGate>} />
 
           <Route path="*" element={<NotFound />} />

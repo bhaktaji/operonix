@@ -465,3 +465,41 @@ Artifact Registry assumptions in [GOOGLE_CLOUD_DEPLOYMENT.md](GOOGLE_CLOUD_DEPLO
 The quote → job → schedule → invoice → payment lifecycle, discount and tax arithmetic, document
 numbering, roles, audit logging and reporting are untouched by P0. Only vocabulary, onboarding and the
 identity/auth mechanics changed, and the existing integration suites still cover those flows.
+
+---
+
+## 15. Operonix 2.0 — P1a financial foundation (implemented)
+
+P0 made the product industry-independent; P1a makes it **financially correct outside a single
+currency and a single tax rate**, without changing the modular monolith or the request flow.
+
+### 15.1 What changed architecturally
+
+- **A finance module owns money configuration.** Legal entities, business locations, tax profiles,
+  numbering rules and FX rates live in `com.operonix.finance`. Quoting and billing consume a single
+  `DocumentSetup` from it, so no country-specific branch leaks into those services.
+- **Currency precision is data.** `currency.minor_units` drives rounding and formatting, so a JPY
+  document rounds to whole yen without a special case.
+- **Tax is a profile, not a rate.** A catalog item points at a tenant tax profile; the profile names a
+  platform definition with one or more components (`CGST` + `SGST`, `VAT`, `CT`, state sales tax). The
+  calculator receives component rates and a mode (`EXCLUSIVE`/`INCLUSIVE`).
+- **Documents are snapshots.** Entity, tax profile name, tax mode, currency, FX rate, base-currency
+  totals and every printed tax row are stored at issue. Configuration changes never rewrite history.
+- **Numbering is a rule.** `document_number_rule` replaces the hardcoded `PREFIX-YEAR-0000` format; the
+  backfilled default reproduces existing numbers exactly.
+- **New workspaces are seeded** with a default entity, the country's standard tax profile, a settings
+  row and a main location via a domain event, keeping the tenancy → finance dependency one-way.
+
+### 15.2 Explicitly unchanged
+
+- Single deployable Spring Boot application, shared-schema tenancy, JWT access tokens with rotating
+  refresh tokens, Flyway forward-only migrations, and the existing customer → quote → job → invoice →
+  payment workflow.
+- Google Cloud deployment topology: Cloud Run + Cloud SQL + Secret Manager, with migrations still run
+  by the same startup/migrate job.
+
+### 15.3 Deliberately out of scope for P1a
+
+Costing (P1b), BI (P2a), Operonix AI (P2b), payment gateway integration, and automated FX feeds.
+Exchange rates are entered by the workspace, and reporting conversion (P2a) will read the snapshots
+written here.

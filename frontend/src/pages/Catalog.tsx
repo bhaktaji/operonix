@@ -2,6 +2,7 @@ import { useEffect, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Pencil, Plus, Sparkles } from "lucide-react";
 import { servicesApi } from "@/api/endpoints";
+import { financeApi } from "@/api/finance";
 import type { ServiceInput } from "@/api/endpoints";
 import type { ServiceItem, ServiceUnit } from "@/api/types";
 import { errorMessage } from "@/api/client";
@@ -18,6 +19,7 @@ const emptyForm = {
   basePrice: "0.00",
   durationMinutes: "120",
   taxRate: "0.00",
+  taxProfileId: "",
   active: true,
 };
 
@@ -34,6 +36,7 @@ export function Catalog() {
   const [error, setError] = useState<string | null>(null);
 
   const services = useQuery({ queryKey: ["services"], queryFn: () => servicesApi.list() });
+  const taxProfiles = useQuery({ queryKey: ["tax-profiles"], queryFn: financeApi.tax.profiles });
 
   useEffect(() => {
     if (!dialogOpen) return;
@@ -46,6 +49,7 @@ export function Catalog() {
         basePrice: editing.basePrice.toFixed(2),
         durationMinutes: String(editing.durationMinutes),
         taxRate: (editing.taxRate * 100).toFixed(2),
+        taxProfileId: editing.taxProfileId ?? "",
         active: editing.active,
       });
     } else {
@@ -74,6 +78,7 @@ export function Catalog() {
       basePrice: Number(form.basePrice) || 0,
       durationMinutes: Number(form.durationMinutes) || 120,
       taxRate: (Number(form.taxRate) || 0) / 100,
+      taxProfileId: form.taxProfileId || null,
       active: form.active,
     });
   };
@@ -240,8 +245,25 @@ export function Catalog() {
                 id="svc-tax"
                 inputMode="decimal"
                 value={form.taxRate}
+                disabled={Boolean(form.taxProfileId)}
                 onChange={(event) => setForm({ ...form, taxRate: event.target.value })}
               />
+            </Field>
+            <Field
+              label="Tax profile"
+              htmlFor="svc-tax-profile"
+              hint="Overrides the rate above and prints each tax component separately."
+            >
+              <Select
+                id="svc-tax-profile"
+                value={form.taxProfileId}
+                onChange={(event) => setForm({ ...form, taxProfileId: event.target.value })}
+              >
+                <option value="">Use the rate above</option>
+                {(taxProfiles.data ?? []).map((profile) => (
+                  <option key={profile.id} value={profile.id}>{profile.name}</option>
+                ))}
+              </Select>
             </Field>
           </div>
 
