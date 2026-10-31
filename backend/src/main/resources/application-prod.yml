@@ -1,0 +1,70 @@
+# Production profile — activated in the Cloud Run container image (SPRING_PROFILES_ACTIVE=prod).
+#
+# Every value comes from the environment. Cloud Run injects Secret Manager values as environment
+# variables (see deploy/gcp/README.md); no credential lives in this file, in the image, or in
+# version control. The dev-only JWT secret is rejected here by JwtService.
+spring:
+  lifecycle:
+    # Cloud Run sends SIGTERM on scale-down and revision switch, then SIGKILLs after 10s. Finishing
+    # in-flight requests inside that window avoids a hard kill; see the Dockerfile ENTRYPOINT, which
+    # keeps the JVM as PID 1 so the signal reaches Spring's graceful shutdown.
+    timeout-per-shutdown-phase: 10s
+  datasource:
+    # Default: Cloud Run's built-in Cloud SQL connector exposes the instance as a Unix socket at
+    # /cloudsql/<project>:<region>:<instance>, so no VPC connector and no authorized network are
+    # required. Set OPERONIX_DB_URL to use any other PostgreSQL endpoint (for example the Cloud SQL
+    # Java Connector with cloudSqlInstance=..., see docs/GOOGLE_CLOUD_DEPLOYMENT.md).
+    url: ${OPERONIX_DB_URL:jdbc:postgresql:///${OPERONIX_DB_NAME:operonix}?host=/cloudsql/${OPERONIX_DB_INSTANCE}}
+    username: ${OPERONIX_DB_USER:operonix}
+    password: ${OPERONIX_DB_PASSWORD}
+    hikari:
+      # Cloud Run scales horizontally, so the pool is per instance: keep it small and size the
+      # Cloud SQL connection limit as (max instances x pool size) + headroom.
+      # See docs/OPERATIONS_RUNBOOK.md ("Connection budget").
+      maximum-pool-size: ${OPERONIX_DB_POOL:5}
+      minimum-idle: ${OPERONIX_DB_MIN_IDLE:1}
+      connection-timeout: ${OPERONIX_DB_CONNECTION_TIMEOUT_MS:10000}
+      max-lifetime: ${OPERONIX_DB_MAX_LIFETIME_MS:1800000}
+      keepalive-time: ${OPERONIX_DB_KEEPALIVE_MS:120000}
+  flyway:
+    # Migrations are idempotent and lock-protected (safe with several instances starting at once).
+    # deploy/gcp/deploy.ps1 runs them out-of-band first, then rolls out the revision.
+    enabled: ${OPERONIX_FLYWAY_ENABLED:true}
+operonix:
+  jwt:
+    # No default: the application refuses to start without a real signing secret.
+    secret: ${OPERONIX_JWT_SECRET}
+  api-docs:
+    enabled: ${OPERONIX_API_DOCS:false}
+  cors:
+    # Single-origin deployment: the browser loads the SPA and calls the API on the same host, so no
+    # cross-origin access is needed or granted. Set this only when a separate origin is introduced.
+    allowed-origins: ${OPERONIX_CORS_ORIGINS:}
+  web:
+    static-locations: ${OPERONIX_STATIC_LOCATIONS:classpath:/static/}
+springdoc:
+  api-docs:
+    enabled: ${OPERONIX_API_DOCS:false}
+  swagger-ui:
+    enabled: ${OPERONIX_API_DOCS:false}
+server:
+  port: ${PORT:8080}
+  # Cloud Run terminates TLS and forwards the original scheme in X-Forwarded-* headers.
+  forward-headers-strategy: framework
+  tomcat:
+    threads:
+      max: ${OPERONIX_TOMCAT_MAX_THREADS:50}
+management:
+  endpoint:
+    health:
+      probes:
+        enabled: true
+      show-details: never
+  endpoints:
+    web:
+      exposure:
+        include: health,info
+logging:
+  level:
+    root: INFO
+    com.operonix: INFO

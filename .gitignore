@@ -1,0 +1,46 @@
+# Local toolchain used by this checkout (JDK/Maven), never part of the product.
+.tools/
+
+# Java / Maven
+target/
+*.jar
+*.class
+!deploy/gcp/*.jar
+
+# Node / Vite
+node_modules/
+dist/
+*.tsbuildinfo
+npm-debug.log*
+yarn-error.log*
+
+# Environment and deployment configuration (real values only; examples are tracked).
+.env
+.env.*
+!.env.example
+deploy/gcp/.env
+deploy/gcp/.env.*
+!deploy/gcp/.env.example
+
+# Cloud credentials must never be committed; Cloud Run uses Workload Identity Federation or a
+# service account managed by Terraform.
+*.pem
+*.key
+*-service-account*.json
+*credentials*.json
+terraform.tfstate
+terraform.tfstate.*
+.terraform/
+terraform.tfvars
+*.auto.tfvars
+
+# Editor and OS noise
+.idea/
+.vscode/
+*.iml
+.DS_Store
+Thumbs.db
+*.log
+
+# Freebuff session state
+.freebuff/

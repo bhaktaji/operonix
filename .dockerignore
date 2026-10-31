@@ -1,0 +1,42 @@
+# Keep the build context small and prevent local artifacts from leaking into the image.
+.git
+.gitignore
+.github
+.freebuff
+
+# Local toolchain (project-local JDK/Maven) — never part of the product.
+.tools
+
+# Host build output: the image builds its own. Dist/ must not be copied by hand.
+backend/target
+frontend/dist
+frontend/node_modules
+frontend/*.tsbuildinfo
+**/*.log
+**/*.log.*
+target/
+node_modules/
+dist/
+
+# Local environment and editor state.
+.env
+.env.*
+!.env.example
+*.local
+.vscode
+.idea
+*.iml
+
+# Secrets must never enter the image; Cloud Run injects them from Secret Manager.
+deploy/gcp/.env
+**/*.pem
+**/*.key
+*service-account*.json
+*credentials*.json
+
+# Documentation and compose files are not needed at runtime.
+docs
+README.md
+memory.md
+compose.yaml
+*.md

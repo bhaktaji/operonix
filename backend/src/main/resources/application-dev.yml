@@ -1,0 +1,13 @@
+# Local development only. The default JWT secret is intentionally public and is rejected in prod.
+spring:
+  datasource:
+    url: ${OPERONIX_DB_URL:jdbc:postgresql://localhost:5432/operonix}
+    username: ${OPERONIX_DB_USER:operonix}
+    password: ${OPERONIX_DB_PASSWORD:operonix}
+operonix:
+  jwt:
+    secret: ${OPERONIX_JWT_SECRET:operonix-dev-only-secret-do-not-use-in-production-4f8a2c}
+logging:
+  level:
+    com.operonix: DEBUG
+    org.hibernate.SQL: INFO

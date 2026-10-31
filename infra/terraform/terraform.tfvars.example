@@ -1,0 +1,27 @@
+# Copy to terraform.tfvars (git-ignored) and edit. Do not commit real project IDs you consider
+# sensitive, and never put secret values here — Terraform generates and stores them in Secret Manager.
+
+project_id  = "your-gcp-project-id"
+region      = "asia-south1"
+environment = "staging"
+
+# Image is normally set by the deployment pipeline; provide a tag here only for the first apply.
+# image = "asia-south1-docker.pkg.dev/your-gcp-project-id/operonix/operonix:latest"
+
+db_tier        = "db-g1-small"
+db_pool_size   = 5
+min_instances  = 0
+max_instances  = 3
+cpu            = "1"
+memory         = "1Gi"
+concurrency    = 80
+
+# Keep API docs off outside local development.
+api_docs_enabled = false
+
+# No bucket until attachments are implemented.
+create_attachments_bucket = false
+
+# Enable to let GitHub Actions deploy through Workload Identity Federation (no key files).
+enable_github_oidc = false
+# github_repository = "your-org/operonix"

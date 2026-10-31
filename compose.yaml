@@ -1,0 +1,26 @@
+# Local PostgreSQL for Operonix development.
+#
+#   docker compose up -d db
+#   cd backend && mvn spring-boot:run -Dspring-boot.run.profiles=dev
+#
+# Tests do not need this: they run against Zonky embedded PostgreSQL.
+services:
+  db:
+    image: postgres:16-alpine
+    container_name: operonix-db
+    environment:
+      POSTGRES_DB: operonix
+      POSTGRES_USER: operonix
+      POSTGRES_PASSWORD: operonix
+    ports:
+      - "5432:5432"
+    volumes:
+      - operonix-pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U operonix -d operonix"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+volumes:
+  operonix-pgdata:

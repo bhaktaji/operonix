@@ -1,0 +1,73 @@
+spring:
+  application:
+    name: operonix
+  datasource:
+    url: ${OPERONIX_DB_URL:jdbc:postgresql://localhost:5432/operonix}
+    username: ${OPERONIX_DB_USER:operonix}
+    password: ${OPERONIX_DB_PASSWORD:operonix}
+    hikari:
+      maximum-pool-size: ${OPERONIX_DB_POOL:10}
+  jpa:
+    open-in-view: false
+    hibernate:
+      ddl-auto: validate
+    properties:
+      hibernate:
+        jdbc:
+          time_zone: UTC
+        default_batch_fetch_size: 50
+  flyway:
+    enabled: true
+    locations: classpath:db/migration
+  web:
+    resources:
+      # WebStaticConfig registers /** itself so the SPA fallback is the only resource handler and
+      # there is no ambiguity about which one serves a deep link.
+      add-mappings: false
+  jackson:
+    default-property-inclusion: non_null
+    serialization:
+      write-dates-as-timestamps: false
+    deserialization:
+      fail-on-unknown-properties: false
+  lifecycle:
+    timeout-per-shutdown-phase: 20s
+server:
+  port: ${PORT:8080}
+  shutdown: graceful
+  error:
+    include-message: never
+    include-stacktrace: never
+  compression:
+    enabled: true
+    mime-types: application/json
+management:
+  endpoints:
+    web:
+      exposure:
+        include: health,info
+  endpoint:
+    health:
+      probes:
+        enabled: true
+operonix:
+  jwt:
+    secret: ${OPERONIX_JWT_SECRET:}
+    issuer: ${OPERONIX_JWT_ISSUER:operonix}
+    audience: ${OPERONIX_JWT_AUDIENCE:operonix-web}
+    access-token-ttl: ${OPERONIX_ACCESS_TTL:15m}
+    refresh-token-ttl: ${OPERONIX_REFRESH_TTL:30d}
+  cors:
+    allowed-origins: ${OPERONIX_CORS_ORIGINS:http://localhost:5173}
+  rate-limit:
+    login-attempts: 10
+    login-window: 5m
+  web:
+    # Where the built React bundle lives. In the container image it is baked into
+    # classpath:/static/; tests point this at a fixture.
+    static-locations: ${OPERONIX_STATIC_LOCATIONS:classpath:/static/}
+  api-docs:
+    enabled: ${OPERONIX_API_DOCS:true}
+  default-due-days: 14
+  quote-validity-days: 14
+  max-series-occurrences: 26

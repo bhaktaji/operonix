@@ -1,0 +1,124 @@
+name: Deploy
+
+# Builds the image with Cloud Build, applies migrations in the migrate-only job, then rolls out the
+# Cloud Run service and runs post-deployment checks.
+#
+# Authentication uses Workload Identity Federation — no service-account key is stored in this
+# repository. Required repository configuration:
+#   variables: GCP_PROJECT_ID, GCP_REGION
+#   secrets  : GCP_WORKLOAD_IDENTITY_PROVIDER, GCP_DEPLOY_SERVICE_ACCOUNT
+# See deploy/gcp/README.md §7 and infra/terraform (enable_github_oidc = true).
+on:
+  push:
+    branches: [main]
+    tags: ["v*"]
+  workflow_dispatch:
+    inputs:
+      environment:
+        description: "Target environment"
+        type: choice
+        options: [staging, production]
+        default: staging
+
+concurrency:
+  # One rollout per environment; never two revisions of the same service at once.
+  group: deploy-${{ github.event.inputs.environment || (startsWith(github.ref, 'refs/tags/v') && 'production' || 'staging') }}
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+  id-token: write # required to request the OIDC token exchanged with Workload Identity Federation
+
+env:
+  SERVICE_IMAGE: operonix
+
+jobs:
+  deploy:
+    name: Deploy to ${{ github.event.inputs.environment || (startsWith(github.ref, 'refs/tags/v') && 'production' || 'staging') }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    environment: ${{ github.event.inputs.environment || (startsWith(github.ref, 'refs/tags/v') && 'production' || 'staging') }}
+    env:
+      ENV_NAME: ${{ github.event.inputs.environment || (startsWith(github.ref, 'refs/tags/v') && 'production' || 'staging') }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Check configuration
+        run: |
+          missing=0
+          for name in GCP_PROJECT_ID GCP_REGION; do
+            if [ -z "${!name}" ]; then echo "::error::repository variable $name is not set"; missing=1; fi
+          done
+          for name in GCP_WORKLOAD_IDENTITY_PROVIDER GCP_DEPLOY_SERVICE_ACCOUNT; do
+            if [ -z "${!name}" ]; then echo "::error::repository secret $name is not set"; missing=1; fi
+          done
+          exit $missing
+        env:
+          GCP_PROJECT_ID: ${{ vars.GCP_PROJECT_ID }}
+          GCP_REGION: ${{ vars.GCP_REGION }}
+          GCP_WORKLOAD_IDENTITY_PROVIDER: ${{ secrets.GCP_WORKLOAD_IDENTITY_PROVIDER }}
+          GCP_DEPLOY_SERVICE_ACCOUNT: ${{ secrets.GCP_DEPLOY_SERVICE_ACCOUNT }}
+
+      - name: Authenticate to Google Cloud (Workload Identity Federation)
+        uses: google-github-actions/auth@v2
+        with:
+          workload_identity_provider: ${{ secrets.GCP_WORKLOAD_IDENTITY_PROVIDER }}
+          service_account: ${{ secrets.GCP_DEPLOY_SERVICE_ACCOUNT }}
+          create_credentials_file: true
+
+      - name: Set up gcloud
+        uses: google-github-actions/setup-gcloud@v2
+        with:
+          project_id: ${{ vars.GCP_PROJECT_ID }}
+
+      # Cloud Build builds, pushes and (with _DEPLOY=true) updates the migration job and rolls out the
+      # service. Migrations run before traffic moves; see cloudbuild.yaml.
+      - name: Build, migrate and deploy
+        run: |
+          gcloud builds submit . \
+            --config cloudbuild.yaml \
+            --project "$GCP_PROJECT_ID" \
+            --substitutions="_REGION=${GCP_REGION},_AR_REPO=operonix,_IMAGE=${SERVICE_IMAGE},_ENV=${ENV_NAME},_DEPLOY=true" \
+            --quiet
+        env:
+          GCP_PROJECT_ID: ${{ vars.GCP_PROJECT_ID }}
+          GCP_REGION: ${{ vars.GCP_REGION }}
+
+      - name: Post-deployment smoke test
+        run: |
+          url=$(gcloud run services describe "operonix-api-${ENV_NAME}" \
+            --region "$GCP_REGION" --project "$GCP_PROJECT_ID" --format='value(status.url)')
+          echo "service: $url"
+          status=$(curl -s -o /dev/null -w '%{http_code}' "$url/actuator/health/readiness")
+          readiness=$(curl -fsS "$url/actuator/health/readiness" | sed -n 's/.*"status":"\([A-Z]*\)".*/\1/p')
+          shell=$(curl -s -o /dev/null -w '%{http_code}' "$url/")
+          deep=$(curl -s -o /dev/null -w '%{http_code}' "$url/quotes/deep-link-smoke")
+          unauth=$(curl -s -o /dev/null -w '%{http_code}' "$url/api/v1/customers")
+          printf 'readiness=%s (%s) shell=%s deep-link=%s unauth-api=%s\n' \
+            "$readiness" "$status" "$shell" "$deep" "$unauth"
+          test "$readiness" = "UP"
+          test "$shell" = "200"
+          test "$deep" = "200"
+          test "$unauth" = "401"
+        env:
+          GCP_PROJECT_ID: ${{ vars.GCP_PROJECT_ID }}
+          GCP_REGION: ${{ vars.GCP_REGION }}
+
+      - name: Record service URL
+        run: |
+          url=$(gcloud run services describe "operonix-api-${ENV_NAME}" \
+            --region "$GCP_REGION" --project "$GCP_PROJECT_ID" --format='value(status.url)')
+          {
+            echo "### Deployed to ${ENV_NAME}"
+            echo ""
+            echo "- Service: $url"
+            echo "- Revision: \`$(gcloud run services describe "operonix-api-${ENV_NAME}" \
+              --region "$GCP_REGION" --project "$GCP_PROJECT_ID" \
+              --format='value(status.latestReadyRevisionName)')\`"
+            echo ""
+            echo "Roll back with: \`gcloud run services update-traffic operonix-api-${ENV_NAME} \
+              --region $GCP_REGION --to-revisions=<previous>=100\`"
+          } >> "$GITHUB_STEP_SUMMARY"
+        env:
+          GCP_PROJECT_ID: ${{ vars.GCP_PROJECT_ID }}
+          GCP_REGION: ${{ vars.GCP_REGION }}

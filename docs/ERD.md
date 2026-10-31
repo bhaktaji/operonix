@@ -1,0 +1,602 @@
+# Operonix — Entity Relationship Design (ERD)
+
+| Field | Value |
+| --- | --- |
+| Version | 1.0 |
+| Last updated | 2026-10-30 |
+| Database | PostgreSQL 16 |
+| Schema | `public` (single schema, shared tables, `tenant_id` discriminator) |
+| Migration tool | Flyway, forward-only (`backend/src/main/resources/db/migration`) |
+| ORM mapping | Hibernate 6, `ddl-auto=validate` |
+
+Companion: [HLD.md](HLD.md) §6 (tenancy), [LLD.md](LLD.md) §5 (rules) and §8 (isolation).
+Column names here are the physical names used by JPA entities and SQL migrations.
+
+---
+
+## 1. ER diagram
+
+```mermaid
+erDiagram
+    TENANT ||--o{ APP_USER : "employs"
+    TENANT ||--o{ CUSTOMER : "owns"
+    TENANT ||--o{ SERVICE_ITEM : "defines"
+    TENANT ||--o{ QUOTE : "issues"
+    TENANT ||--o{ JOB : "schedules"
+    TENANT ||--o{ INVOICE : "bills"
+    TENANT ||--o{ PAYMENT : "records"
+    TENANT ||--o{ AUDIT_EVENT : "logs"
+    TENANT ||--o{ DOCUMENT_SEQUENCE : "numbers"
+
+    APP_USER ||--o{ REFRESH_TOKEN : "holds"
+    APP_USER ||--o{ JOB_ASSIGNMENT : "is assigned"
+    APP_USER ||--o{ AUDIT_EVENT : "acts"
+
+    CUSTOMER ||--o{ SERVICE_LOCATION : "has"
+    CUSTOMER ||--o{ QUOTE : "receives"
+    CUSTOMER ||--o{ JOB : "requests"
+    CUSTOMER ||--o{ INVOICE : "is billed"
+
+    SERVICE_LOCATION ||--o{ QUOTE : "site of"
+    SERVICE_LOCATION ||--o{ JOB : "site of"
+
+    SERVICE_ITEM ||--o{ QUOTE_LINE : "prices"
+    SERVICE_ITEM ||--o{ INVOICE_LINE : "prices"
+
+    QUOTE ||--|{ QUOTE_LINE : "contains"
+    QUOTE |o--o| JOB : "converted to"
+    JOB ||--o{ JOB_ASSIGNMENT : "staffed by"
+    JOB |o--o{ INVOICE : "invoiced as"
+
+    INVOICE ||--|{ INVOICE_LINE : "contains"
+    INVOICE ||--o{ PAYMENT : "settled by"
+
+    TENANT {
+        uuid id PK
+        varchar name
+        varchar slug UK
+        varchar currency
+        varchar timezone
+        timestamptz created_at
+        bigint version
+    }
+    APP_USER {
+        uuid id PK
+        uuid tenant_id FK
+        varchar email UK
+        varchar password_hash
+        varchar full_name
+        varchar role
+        boolean active
+        timestamptz last_login_at
+    }
+    REFRESH_TOKEN {
+        uuid id PK
+        uuid user_id FK
+        varchar token_hash UK
+        timestamptz expires_at
+        timestamptz revoked_at
+    }
+    CUSTOMER {
+        uuid id PK
+        uuid tenant_id FK
+        varchar name
+        varchar contact_name
+        varchar email
+        varchar phone
+        varchar status
+        varchar billing_city
+        varchar billing_country
+    }
+    SERVICE_LOCATION {
+        uuid id PK
+        uuid tenant_id FK
+        uuid customer_id FK
+        varchar label
+        varchar line1
+        varchar city
+        varchar postal_code
+        varchar country
+        boolean is_primary
+    }
+    SERVICE_ITEM {
+        uuid id PK
+        uuid tenant_id FK
+        varchar name
+        varchar unit
+        numeric base_price
+        int duration_minutes
+        numeric tax_rate
+        boolean active
+    }
+    QUOTE {
+        uuid id PK
+        uuid tenant_id FK
+        uuid customer_id FK
+        uuid location_id FK
+        varchar number
+        varchar status
+        date issue_date
+        date valid_until
+        numeric subtotal
+        numeric discount_amount
+        numeric tax_amount
+        numeric total
+        uuid converted_job_id
+    }
+    QUOTE_LINE {
+        uuid id PK
+        uuid tenant_id FK
+        uuid quote_id FK
+        uuid service_item_id FK
+        int position
+        varchar description
+        numeric quantity
+        numeric unit_price
+        numeric tax_rate
+        numeric line_subtotal
+        numeric line_tax
+        numeric line_total
+    }
+    JOB {
+        uuid id PK
+        uuid tenant_id FK
+        uuid customer_id FK
+        uuid location_id FK
+        uuid quote_id FK
+        varchar number
+        varchar title
+        timestamptz scheduled_start
+        timestamptz scheduled_end
+        varchar status
+        varchar recurrence
+        uuid series_id
+    }
+    JOB_ASSIGNMENT {
+        uuid id PK
+        uuid tenant_id FK
+        uuid job_id FK
+        uuid user_id FK
+    }
+    INVOICE {
+        uuid id PK
+        uuid tenant_id FK
+        uuid customer_id FK
+        uuid job_id FK
+        varchar number
+        varchar status
+        date issue_date
+        date due_date
+        numeric subtotal
+        numeric discount_amount
+        numeric tax_amount
+        numeric total
+        numeric amount_paid
+        timestamptz paid_at
+    }
+    INVOICE_LINE {
+        uuid id PK
+        uuid tenant_id FK
+        uuid invoice_id FK
+        uuid service_item_id FK
+        int position
+        varchar description
+        numeric quantity
+        numeric unit_price
+        numeric tax_rate
+        numeric line_subtotal
+        numeric line_tax
+        numeric line_total
+    }
+    PAYMENT {
+        uuid id PK
+        uuid tenant_id FK
+        uuid invoice_id FK
+        numeric amount
+        varchar method
+        varchar reference
+        timestamptz paid_at
+    }
+    AUDIT_EVENT {
+        uuid id PK
+        uuid tenant_id FK
+        uuid actor_user_id FK
+        varchar action
+        varchar entity_type
+        uuid entity_id
+        text detail
+        timestamptz created_at
+    }
+    DOCUMENT_SEQUENCE {
+        uuid tenant_id PK
+        varchar doc_type PK
+        int year PK
+        int next_value
+    }
+```
+
+---
+
+## 2. Global schema conventions
+
+| Convention | Rule |
+| --- | --- |
+| Primary keys | `uuid` generated in the application (`UUID.randomUUID()`), no DB extension required |
+| Tenant key | `tenant_id uuid NOT NULL REFERENCES tenant(id) ON DELETE RESTRICT` on every tenant-owned table |
+| Timestamps | `timestamptz NOT NULL`, written in UTC by the application; `created_at` immutable |
+| Money | `numeric(12,2) NOT NULL DEFAULT 0`; quantities `numeric(10,3)`; tax rates `numeric(5,4)` |
+| Enums | `varchar` + `CHECK` constraint, mapped with `@Enumerated(EnumType.STRING)` |
+| Optimistic locking | `version bigint NOT NULL DEFAULT 0` on mutable aggregates (`tenant`, `app_user`, `customer`, `service_item`, `quote`, `job`, `invoice`) |
+| Cascades | JPA cascades only within an aggregate (quote→lines, invoice→lines); cross-aggregate references use `ON DELETE RESTRICT` and explicit service logic |
+| Deletion | Tenant data is archived/voided, never hard-deleted except draft quotes, locations and draft line rows |
+| Naming | snake_case, singular table names, index names `ix_<table>_<cols>`, constraints `ck_`, `uq_`, `fk_` |
+| Character set | UTF-8 database; case-insensitive comparison handled in the application (emails/names normalised) |
+
+---
+
+## 3. Table definitions
+
+### 3.1 `tenant`
+
+| Column | Type | Constraints |
+| --- | --- | --- |
+| `id` | uuid | PK |
+| `name` | varchar(120) | NOT NULL, `ck_tenant_name_len` length between 2 and 120 |
+| `slug` | varchar(63) | NOT NULL, UNIQUE `uq_tenant_slug`, `ck_tenant_slug` matches `^[a-z0-9][a-z0-9-]{1,62}$` |
+| `currency` | varchar(3) | NOT NULL, `ck_tenant_currency` in (`USD`,`EUR`,`GBP`,`INR`,`AUD`,`CAD`) |
+| `timezone` | varchar(64) | NOT NULL DEFAULT `UTC` |
+| `created_at` / `updated_at` | timestamptz | NOT NULL |
+| `version` | bigint | NOT NULL DEFAULT 0 |
+
+Indexes: `uq_tenant_slug` (unique). Deletion: restricted while dependent rows exist.
+
+### 3.2 `app_user`
+
+| Column | Type | Constraints |
+| --- | --- | --- |
+| `id` | uuid | PK |
+| `tenant_id` | uuid | NOT NULL FK → `tenant(id)` |
+| `email` | varchar(254) | NOT NULL, stored lowercase, UNIQUE `uq_app_user_email` (global identity) |
+| `password_hash` | varchar(100) | NOT NULL (BCrypt, strength 12) |
+| `full_name` | varchar(120) | NOT NULL |
+| `role` | varchar(20) | NOT NULL, `ck_app_user_role` in (`OWNER`,`ADMIN`,`MANAGER`,`TECHNICIAN`) |
+| `active` | boolean | NOT NULL DEFAULT true |
+| `last_login_at` | timestamptz | NULL |
+| `created_at` / `updated_at` | timestamptz | NOT NULL |
+| `version` | bigint | NOT NULL DEFAULT 0 |
+
+Indexes: `uq_app_user_email`; `ix_app_user_tenant_role (tenant_id, role)`.
+v1 rule: exactly one tenant per user (documented limitation; a `membership` table is the v2 path).
+
+### 3.3 `refresh_token`
+
+| Column | Type | Constraints |
+| --- | --- | --- |
+| `id` | uuid | PK |
+| `user_id` | uuid | NOT NULL FK → `app_user(id)` ON DELETE CASCADE |
+| `token_hash` | varchar(64) | NOT NULL UNIQUE (SHA-256 hex of the opaque token) |
+| `expires_at` | timestamptz | NOT NULL |
+| `revoked_at` | timestamptz | NULL |
+| `created_at` | timestamptz | NOT NULL |
+
+Indexes: `uq_refresh_token_hash`; `ix_refresh_token_user_expiry (user_id, expires_at)`.
+Raw tokens are never stored; expired rows are pruned by a maintenance job (manual in v1).
+
+### 3.4 `customer`
+
+| Column | Type | Constraints |
+| --- | --- | --- |
+| `id` | uuid | PK |
+| `tenant_id` | uuid | NOT NULL FK → `tenant(id)` |
+| `name` | varchar(160) | NOT NULL, `ck_customer_name_len` length ≥ 1 |
+| `contact_name` | varchar(120) | NULL |
+| `email` | varchar(254) | NULL (lowercase) |
+| `phone` | varchar(32) | NULL |
+| `notes` | varchar(2000) | NULL |
+| `status` | varchar(16) | NOT NULL DEFAULT `ACTIVE`, `ck_customer_status` in (`ACTIVE`,`ARCHIVED`) |
+| `billing_line1` | varchar(160) | NULL |
+| `billing_line2` | varchar(160) | NULL |
+| `billing_city` | varchar(80) | NULL |
+| `billing_region` | varchar(80) | NULL |
+| `billing_postal_code` | varchar(16) | NULL |
+| `billing_country` | varchar(2) | NULL |
+| `created_at` / `updated_at` | timestamptz | NOT NULL |
+| `version` | bigint | NOT NULL DEFAULT 0 |
+
+Indexes: `ix_customer_tenant_name (tenant_id, name)`; `ix_customer_tenant_status (tenant_id, status)`;
+`ix_customer_tenant_email (tenant_id, email)`.
+Deletion: restricted by locations, quotes, jobs, invoices (archive instead).
+
+### 3.5 `service_location`
+
+| Column | Type | Constraints |
+| --- | --- | --- |
+| `id` | uuid | PK |
+| `tenant_id` | uuid | NOT NULL FK → `tenant(id)` |
+| `customer_id` | uuid | NOT NULL FK → `customer(id)` ON DELETE CASCADE |
+| `label` | varchar(80) | NOT NULL |
+| `line1` / `line2` | varchar(160) | `line1` NOT NULL |
+| `city` | varchar(80) | NOT NULL |
+| `region` | varchar(80) | NULL |
+| `postal_code` | varchar(16) | NOT NULL |
+| `country` | varchar(2) | NOT NULL |
+| `access_notes` | varchar(1000) | NULL |
+| `is_primary` | boolean | NOT NULL DEFAULT false |
+| `created_at` / `updated_at` | timestamptz | NOT NULL |
+
+Indexes: `ix_service_location_tenant_customer (tenant_id, customer_id)`; partial unique
+`uq_service_location_primary ON (customer_id) WHERE is_primary` (at most one primary location).
+
+### 3.6 `service_item`
+
+| Column | Type | Constraints |
+| --- | --- | --- |
+| `id` | uuid | PK |
+| `tenant_id` | uuid | NOT NULL FK → `tenant(id)` |
+| `name` | varchar(120) | NOT NULL |
+| `description` | varchar(500) | NULL |
+| `unit` | varchar(16) | NOT NULL, `ck_service_item_unit` in (`HOUR`,`VISIT`,`SQUARE_FOOT`,`ROOM`,`FLAT`) |
+| `base_price` | numeric(12,2) | NOT NULL, `ck_service_item_price` ≥ 0 |
+| `duration_minutes` | int | NOT NULL, `ck_service_item_duration` 15–1440 |
+| `tax_rate` | numeric(5,4) | NOT NULL DEFAULT 0, `ck_service_item_tax` 0–1 |
+| `active` | boolean | NOT NULL DEFAULT true |
+| `created_at` / `updated_at` | timestamptz | NOT NULL |
+| `version` | bigint | NOT NULL DEFAULT 0 |
+
+Indexes: `ix_service_item_tenant_active (tenant_id, active)`; unique `uq_service_item_name (tenant_id, name)`.
+
+### 3.7 `quote`
+
+| Column | Type | Constraints |
+| --- | --- | --- |
+| `id` | uuid | PK |
+| `tenant_id` | uuid | NOT NULL FK → `tenant(id)` |
+| `customer_id` | uuid | NOT NULL FK → `customer(id)` |
+| `location_id` | uuid | NULL FK → `service_location(id)` |
+| `number` | varchar(20) | NOT NULL, UNIQUE `uq_quote_number (tenant_id, number)` |
+| `status` | varchar(16) | NOT NULL DEFAULT `DRAFT`, `ck_quote_status` in (`DRAFT`,`SENT`,`ACCEPTED`,`DECLINED`,`EXPIRED`,`CONVERTED`) |
+| `issue_date` | date | NOT NULL |
+| `valid_until` | date | NOT NULL, `ck_quote_validity` ≥ `issue_date` |
+| `currency` | varchar(3) | NOT NULL (snapshot of tenant currency) |
+| `notes` | varchar(2000) | NULL |
+| `subtotal` | numeric(12,2) | NOT NULL DEFAULT 0 |
+| `discount_amount` | numeric(12,2) | NOT NULL DEFAULT 0, `ck_quote_discount` 0 ≤ discount ≤ subtotal |
+| `tax_amount` | numeric(12,2) | NOT NULL DEFAULT 0 |
+| `total` | numeric(12,2) | NOT NULL DEFAULT 0 |
+| `converted_job_id` | uuid | NULL (no FK to avoid a cycle; validated by service + `uq_job_quote`) |
+| `created_by` | uuid | NOT NULL FK → `app_user(id)` |
+| `created_at` / `updated_at` | timestamptz | NOT NULL |
+| `version` | bigint | NOT NULL DEFAULT 0 |
+
+Indexes: `uq_quote_number`; `ix_quote_tenant_status_date (tenant_id, status, issue_date DESC)`;
+`ix_quote_tenant_customer (tenant_id, customer_id)`.
+
+### 3.8 `quote_line`
+
+| Column | Type | Constraints |
+| --- | --- | --- |
+| `id` | uuid | PK |
+| `tenant_id` | uuid | NOT NULL FK → `tenant(id)` |
+| `quote_id` | uuid | NOT NULL FK → `quote(id)` ON DELETE CASCADE |
+| `service_item_id` | uuid | NULL FK → `service_item(id)` ON DELETE SET NULL |
+| `position` | int | NOT NULL, `ck_quote_line_position` ≥ 0 |
+| `description` | varchar(300) | NOT NULL |
+| `quantity` | numeric(10,3) | NOT NULL, `ck_quote_line_qty` > 0 |
+| `unit_price` | numeric(12,2) | NOT NULL, ≥ 0 |
+| `tax_rate` | numeric(5,4) | NOT NULL, 0–1 |
+| `line_subtotal` | numeric(12,2) | NOT NULL |
+| `line_tax` | numeric(12,2) | NOT NULL |
+| `line_total` | numeric(12,2) | NOT NULL |
+
+Index: `ix_quote_line_quote (quote_id, position)`; unique `uq_quote_line_position (quote_id, position)`.
+
+### 3.9 `job`
+
+| Column | Type | Constraints |
+| --- | --- | --- |
+| `id` | uuid | PK |
+| `tenant_id` | uuid | NOT NULL FK → `tenant(id)` |
+| `customer_id` | uuid | NOT NULL FK → `customer(id)` |
+| `location_id` | uuid | NOT NULL FK → `service_location(id)` |
+| `quote_id` | uuid | NULL FK → `quote(id)` |
+| `number` | varchar(20) | NOT NULL, UNIQUE `uq_job_number (tenant_id, number)` |
+| `title` | varchar(160) | NOT NULL |
+| `scheduled_start` / `scheduled_end` | timestamptz | NOT NULL, `ck_job_window` `scheduled_end > scheduled_start` |
+| `status` | varchar(16) | NOT NULL DEFAULT `SCHEDULED`, `ck_job_status` in (`SCHEDULED`,`IN_PROGRESS`,`COMPLETED`,`CANCELLED`) |
+| `recurrence` | varchar(16) | NOT NULL DEFAULT `NONE`, `ck_job_recurrence` in (`NONE`,`WEEKLY`,`BIWEEKLY`,`MONTHLY`) |
+| `series_id` | uuid | NULL (first job of a series) |
+| `notes` | varchar(2000) | NULL |
+| `created_by` | uuid | NOT NULL FK → `app_user(id)` |
+| `completed_at` | timestamptz | NULL, `ck_job_completed` set iff `status = 'COMPLETED'` |
+| `created_at` / `updated_at` | timestamptz | NOT NULL |
+| `version` | bigint | NOT NULL DEFAULT 0 |
+
+Indexes: `uq_job_number`; `ix_job_tenant_start (tenant_id, scheduled_start)`;
+`ix_job_tenant_customer (tenant_id, customer_id)`; `ix_job_tenant_status (tenant_id, status)`;
+`uq_job_quote ON (quote_id) WHERE quote_id IS NOT NULL` (one job per converted quote);
+`ix_job_series (tenant_id, series_id)`.
+
+### 3.10 `job_assignment`
+
+| Column | Type | Constraints |
+| --- | --- | --- |
+| `id` | uuid | PK |
+| `tenant_id` | uuid | NOT NULL FK → `tenant(id)` |
+| `job_id` | uuid | NOT NULL FK → `job(id)` ON DELETE CASCADE |
+| `user_id` | uuid | NOT NULL FK → `app_user(id)` |
+| `created_at` | timestamptz | NOT NULL |
+
+Indexes: UNIQUE `uq_job_assignment (job_id, user_id)`;
+`ix_job_assignment_tenant_user (tenant_id, user_id)` (drives conflict detection and "my jobs").
+
+### 3.11 `invoice`
+
+| Column | Type | Constraints |
+| --- | --- | --- |
+| `id` | uuid | PK |
+| `tenant_id` | uuid | NOT NULL FK → `tenant(id)` |
+| `customer_id` | uuid | NOT NULL FK → `customer(id)` |
+| `job_id` | uuid | NULL FK → `job(id)` |
+| `number` | varchar(20) | NOT NULL, UNIQUE `uq_invoice_number (tenant_id, number)` |
+| `status` | varchar(16) | NOT NULL DEFAULT `DRAFT`, `ck_invoice_status` in (`DRAFT`,`SENT`,`PARTIALLY_PAID`,`PAID`,`VOID`) |
+| `issue_date` | date | NOT NULL |
+| `due_date` | date | NOT NULL, `ck_invoice_due` ≥ `issue_date` |
+| `currency` | varchar(3) | NOT NULL |
+| `notes` | varchar(2000) | NULL |
+| `subtotal` | numeric(12,2) | NOT NULL DEFAULT 0 |
+| `discount_amount` | numeric(12,2) | NOT NULL DEFAULT 0, 0 ≤ discount ≤ subtotal |
+| `tax_amount` | numeric(12,2) | NOT NULL DEFAULT 0 |
+| `total` | numeric(12,2) | NOT NULL DEFAULT 0 |
+| `amount_paid` | numeric(12,2) | NOT NULL DEFAULT 0, `ck_invoice_paid` 0 ≤ amount_paid |
+| `paid_at` | timestamptz | NULL (set when fully paid) |
+| `void_reason` | varchar(500) | NULL, required when `status = 'VOID'` |
+| `created_by` | uuid | NOT NULL FK → `app_user(id)` |
+| `created_at` / `updated_at` | timestamptz | NOT NULL |
+| `version` | bigint | NOT NULL DEFAULT 0 |
+
+Indexes: `uq_invoice_number`; `ix_invoice_tenant_status_due (tenant_id, status, due_date)`;
+`ix_invoice_tenant_customer (tenant_id, customer_id)`;
+partial unique `uq_invoice_job_active ON (job_id) WHERE job_id IS NOT NULL AND status <> 'VOID'`
+(one live invoice per job).
+
+### 3.12 `invoice_line`
+
+Identical shape to `quote_line` with `invoice_id` instead of `quote_id`:
+`id`, `tenant_id`, `invoice_id` (FK → invoice, ON DELETE CASCADE), `service_item_id` (nullable),
+`position`, `description` varchar(300), `quantity` numeric(10,3), `unit_price` numeric(12,2),
+`tax_rate` numeric(5,4), `line_subtotal`, `line_tax`, `line_total` numeric(12,2).
+Index: `ix_invoice_line_invoice (invoice_id, position)`, unique `uq_invoice_line_position (invoice_id, position)`.
+
+### 3.13 `payment`
+
+| Column | Type | Constraints |
+| --- | --- | --- |
+| `id` | uuid | PK |
+| `tenant_id` | uuid | NOT NULL FK → `tenant(id)` |
+| `invoice_id` | uuid | NOT NULL FK → `invoice(id)` |
+| `amount` | numeric(12,2) | NOT NULL, `ck_payment_amount` > 0 |
+| `method` | varchar(16) | NOT NULL, `ck_payment_method` in (`CASH`,`CARD`,`BANK_TRANSFER`,`CHECK`,`OTHER`) |
+| `reference` | varchar(120) | NULL |
+| `paid_at` | timestamptz | NOT NULL |
+| `recorded_by` | uuid | NOT NULL FK → `app_user(id)` |
+| `created_at` | timestamptz | NOT NULL |
+
+Index: `ix_payment_tenant_invoice (tenant_id, invoice_id)`; `ix_payment_tenant_paid_at (tenant_id, paid_at)`
+for revenue reporting. Payments are immutable rows; reversal deletes the row and recomputes the
+invoice, leaving an audit event (v1).
+
+### 3.14 `audit_event`
+
+| Column | Type | Constraints |
+| --- | --- | --- |
+| `id` | uuid | PK |
+| `tenant_id` | uuid | NOT NULL FK → `tenant(id)` |
+| `actor_user_id` | uuid | NULL FK → `app_user(id)` (null for anonymous failures) |
+| `action` | varchar(40) | NOT NULL (see LLD §9.5) |
+| `entity_type` | varchar(40) | NOT NULL |
+| `entity_id` | uuid | NULL |
+| `detail` | text | NULL (small JSON) |
+| `ip_address` | varchar(45) | NULL |
+| `request_id` | varchar(64) | NULL |
+| `created_at` | timestamptz | NOT NULL |
+
+Index: `ix_audit_event_tenant_created (tenant_id, created_at DESC)`; append-only (no UPDATE/DELETE
+in application code).
+
+### 3.15 `document_sequence`
+
+| Column | Type | Constraints |
+| --- | --- | --- |
+| `tenant_id` | uuid | PK part, FK → `tenant(id)` |
+| `doc_type` | varchar(10) | PK part, `ck_document_sequence_type` in (`QUOTE`,`JOB`,`INVOICE`) |
+| `year` | int | PK part |
+| `next_value` | int | NOT NULL DEFAULT 1, `ck_document_sequence_value` ≥ 1 |
+
+Accessed with `SELECT … FOR UPDATE` inside the inserting transaction (LLD §5.2).
+
+---
+
+## 4. Relationships and delete behaviour
+
+| Parent → Child | Cardinality | Delete rule | Application rule |
+| --- | --- | --- | --- |
+| tenant → app_user, customer, service_item, quote, job, invoice, payment, audit_event | 1:N | RESTRICT | Tenants are never deleted via API in v1 |
+| app_user → refresh_token | 1:N | CASCADE | Revoke on logout/deactivate/password change |
+| customer → service_location | 1:N | CASCADE | Location delete blocked if used by non-cancelled jobs |
+| customer → quote/job/invoice | 1:N | RESTRICT | Archive customer instead of deleting |
+| quote → quote_line | 1:N | CASCADE | Lines replaced wholesale while DRAFT |
+| quote → job | 1:0..1 | SET NULL on job delete (not exposed) | Unique partial index on `job.quote_id` |
+| job → job_assignment | 1:N | CASCADE | Unassign endpoint |
+| job → invoice | 1:N | RESTRICT | At most one non-void invoice per job (partial unique) |
+| invoice → invoice_line | 1:N | CASCADE | Lines replaced while DRAFT |
+| invoice → payment | 1:N | RESTRICT | Payments removed only via audited reversal |
+| service_item → quote_line/invoice_line | 1:N | SET NULL | Historical lines snapshot description/price |
+
+**Cross-tenant safety:** every FK that points at a tenant-owned row is paired with an application
+check that the referenced row has the same `tenant_id`. Composite FKs and RLS are planned hardening
+(LLD §8). Integration tests cover each module.
+
+---
+
+## 5. Index rationale
+
+| Query pattern | Index |
+| --- | --- |
+| Login by email | `uq_app_user_email` |
+| Refresh validation + revoke-all | `uq_refresh_token_hash`, `ix_refresh_token_user_expiry` |
+| Customer list/search by tenant | `ix_customer_tenant_name`, `ix_customer_tenant_status` |
+| Today/range schedule, calendar | `ix_job_tenant_start` |
+| Technician workload, conflict check | `ix_job_assignment_tenant_user` |
+| Quote pipeline list | `ix_quote_tenant_status_date` |
+| Receivables / overdue | `ix_invoice_tenant_status_due` |
+| Revenue reporting by period | `ix_payment_tenant_paid_at` |
+| Audit browsing | `ix_audit_event_tenant_created` |
+
+Reporting aggregates scan `payment`/`invoice`/`job` within one tenant and a date range; the tenant
+prefix keeps scans bounded. If a tenant grows beyond ~1M rows, add monthly partial indexes.
+
+---
+
+## 6. Data integrity rules expressed in SQL
+
+- `CHECK (scheduled_end > scheduled_start)` on `job`.
+- `CHECK (valid_until >= issue_date)` on `quote`; `CHECK (due_date >= issue_date)` on `invoice`.
+- `CHECK (discount_amount >= 0 AND discount_amount <= subtotal)` on `quote` and `invoice`.
+- `CHECK (amount_paid >= 0 AND amount_paid <= total)` on `invoice`.
+- `CHECK (status <> 'VOID' OR void_reason IS NOT NULL)` on `invoice`.
+- `CHECK (status <> 'COMPLETED' OR completed_at IS NOT NULL)` on `job`.
+- Unique `(tenant_id, number)` on quotes, jobs, invoices; unique `(tenant_id, name)` on services.
+- Partial unique indexes: one primary location per customer, one live invoice per job, one job per quote.
+
+---
+
+## 7. Migration policy
+
+V1 as implemented (15 tables): `tenant`, `app_user`, `refresh_token`, `customer`, `service_location`,
+`service_item`, `quote`, `quote_line`, `job`, `job_assignment`, `invoice`, `invoice_line`, `payment`,
+`audit_event`, `document_sequence`.
+
+- `V1__schema.sql` creates extensions-free schema (no `pgcrypto` dependency), all tables,
+  constraints and indexes, plus the `document_sequence` table.
+- No seed migration ships: every row in v1 is tenant-owned, and a new workspace starts empty.
+- Migrations are forward-only; destructive changes require a new migration with a data-copy step.
+- Hibernate runs with `ddl-auto=validate` in every profile so entity/schema drift fails the build.
+- Integration tests run Flyway against an embedded PostgreSQL 16 instance, exercising the real
+  migration path.
+
+---
+
+## 8. Production topology note (no schema change)
+
+The Google Cloud deployment runs the same `V1__schema.sql` against **Cloud SQL for PostgreSQL 16**.
+No table, constraint, index or type changes were required by the deployment work:
+
+- `ddl-auto=validate` is on in every profile, so an entity/schema mismatch fails the container at
+  startup instead of drifting silently.
+- Flyway runs at startup and, in the migrate-only Cloud Run job, before a revision serves traffic
+  (see [LLD.md](LLD.md) §16.2). Migrations remain forward-only per §7.
+- Automated daily backups, 14-day retention and point-in-time recovery are enabled on the instance;
+  recovery procedures are in [DISASTER_RECOVERY.md](DISASTER_RECOVERY.md).
+- Connection capacity is a deployment concern, not a schema one: each Cloud Run instance holds
+  `OPERONIX_DB_POOL` (default 5) connections, and `max_instances × pool + 1 ≤ max_connections`.
+  `/cloudsql` socket access needs no schema or network grants beyond `roles/cloudsql.client`.

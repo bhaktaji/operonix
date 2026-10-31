@@ -1,0 +1,47 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<configuration>
+  <property name="LOG_PATTERN"
+            value="%d{yyyy-MM-dd'T'HH:mm:ss.SSSXXX} %-5level [%thread] %logger{36} requestId=%X{requestId:-} tenantId=%X{tenantId:-} userId=%X{userId:-} - %msg%n"/>
+
+  <!-- Human-readable single-line logs for local development and tests. -->
+  <appender name="CONSOLE" class="ch.qos.logback.core.ConsoleAppender">
+    <encoder>
+      <pattern>${LOG_PATTERN}</pattern>
+    </encoder>
+  </appender>
+
+  <!--
+    Cloud Run production: one JSON object per line on stdout. Cloud Logging parses it into
+    structured entries (severity, logger, message) and keeps the requestId/tenantId/userId MDC
+    fields for correlation, so a log line can be traced back to a request without a log agent.
+  -->
+  <appender name="CLOUD_JSON" class="ch.qos.logback.core.ConsoleAppender">
+    <encoder class="net.logstash.logback.encoder.LoggingEventCompositeJsonEncoder">
+      <providers>
+        <timestamp>
+          <timeZone>UTC</timeZone>
+        </timestamp>
+        <logLevel>
+          <fieldName>severity</fieldName>
+        </logLevel>
+        <loggerName/>
+        <threadName/>
+        <message/>
+        <mdc/>
+        <stackTrace/>
+      </providers>
+    </encoder>
+  </appender>
+
+  <springProfile name="prod">
+    <root level="INFO">
+      <appender-ref ref="CLOUD_JSON"/>
+    </root>
+  </springProfile>
+
+  <springProfile name="!prod">
+    <root level="INFO">
+      <appender-ref ref="CONSOLE"/>
+    </root>
+  </springProfile>
+</configuration>

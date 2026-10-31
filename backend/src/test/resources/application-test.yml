@@ -1,0 +1,25 @@
+spring:
+  jpa:
+    hibernate:
+      ddl-auto: validate
+    properties:
+      hibernate:
+        default_batch_fetch_size: 50
+  flyway:
+    enabled: true
+
+operonix:
+  jwt:
+    secret: test-only-operonix-signing-secret-0123456789abcdef
+    issuer: operonix-test
+    audience: operonix-test
+  api-docs:
+    enabled: false
+  cors:
+    allowed-origins: http://localhost:5173
+
+logging:
+  level:
+    root: WARN
+    com.operonix: INFO
+    org.flywaydb: INFO

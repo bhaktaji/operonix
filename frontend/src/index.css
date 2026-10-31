@@ -1,0 +1,81 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@layer base {
+  html {
+    -webkit-font-smoothing: antialiased;
+    text-rendering: optimizeLegibility;
+  }
+
+  body {
+    @apply bg-sand-100 font-sans text-ink-900;
+  }
+
+  ::selection {
+    @apply bg-brand-200 text-ink-950;
+  }
+
+  :focus-visible {
+    outline: none;
+  }
+
+  input[type="date"]::-webkit-calendar-picker-indicator,
+  input[type="datetime-local"]::-webkit-calendar-picker-indicator {
+    opacity: 0.45;
+    cursor: pointer;
+  }
+
+  ::-webkit-scrollbar {
+    width: 10px;
+    height: 10px;
+  }
+
+  ::-webkit-scrollbar-thumb {
+    @apply rounded-full bg-sand-300;
+  }
+
+  ::-webkit-scrollbar-track {
+    background: transparent;
+  }
+}
+
+@layer components {
+  .card {
+    @apply rounded-xl2 border border-sand-200 bg-white shadow-card;
+  }
+
+  .label {
+    @apply mb-1.5 block text-[13px] font-medium text-ink-700;
+  }
+
+  .input {
+    @apply w-full rounded-lg border border-sand-300 bg-white px-3 py-2.5 text-sm text-ink-900 outline-none transition placeholder:text-ink-400 focus:border-brand-400 focus:ring-4 focus:ring-brand-100 disabled:cursor-not-allowed disabled:bg-sand-50 disabled:text-ink-400;
+  }
+
+  .table-head {
+    @apply px-4 py-3 text-left text-[11px] font-semibold uppercase tracking-[0.14em] text-ink-500;
+  }
+
+  .table-cell {
+    @apply px-4 py-3.5 align-middle text-sm text-ink-700;
+  }
+
+  .nav-link {
+    @apply flex items-center gap-3 rounded-lg px-3 py-2 text-sm font-medium text-ink-400 transition hover:bg-white/5 hover:text-white;
+  }
+
+  .nav-link-active {
+    @apply bg-white/10 text-white;
+  }
+
+  .kicker {
+    @apply text-[11px] font-semibold uppercase tracking-[0.18em] text-ink-400;
+  }
+}
+
+@layer utilities {
+  .text-balance {
+    text-wrap: balance;
+  }
+}
