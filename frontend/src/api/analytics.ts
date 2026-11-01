@@ -133,6 +133,8 @@ export interface RangeQuery {
   from?: string;
   to?: string;
   locationId?: string;
+  // Extra query parameters (metric, granularity, …) ride along through intersections.
+  [param: string]: string | number | boolean | null | undefined;
 }
 
 export const analyticsApi = {

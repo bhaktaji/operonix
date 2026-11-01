@@ -10,6 +10,7 @@ import {
   Menu,
   Package,
   Receipt,
+  Sparkles,
   ScrollText,
   Settings,
   UserCog,
@@ -55,6 +56,7 @@ const NAV_GROUPS: NavGroup[] = [
       { to: "/schedule", labelKey: "nav.schedule", icon: CalendarDays },
       { to: "/invoices", labelKey: "nav.invoices", icon: Receipt, roles: OFFICE },
       { to: "/analytics", labelKey: "nav.analytics", icon: BarChart3, roles: OFFICE },
+      { to: "/assistant", labelKey: "nav.assistant", icon: Sparkles, roles: OFFICE },
     ],
   },
   {

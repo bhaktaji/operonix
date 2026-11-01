@@ -68,6 +68,24 @@ operonix:
     static-locations: ${OPERONIX_STATIC_LOCATIONS:classpath:/static/}
   api-docs:
     enabled: ${OPERONIX_API_DOCS:true}
+  analytics:
+    # Scheduled rollup refresh. Off in a normal web instance; a Cloud Run Job turns it on.
+    run-on-startup: ${OPERONIX_ANALYTICS_RUN_ON_STARTUP:false}
+    exit-after-run: ${OPERONIX_ANALYTICS_EXIT_AFTER_RUN:false}
+    scheduler:
+      enabled: ${OPERONIX_ANALYTICS_SCHEDULER:false}
+      cron: ${OPERONIX_ANALYTICS_CRON:0 15 2 * * *}
+  ai:
+    # Operonix AI is optional. Without a key the assistant explains server-calculated figures
+    # itself; every other surface is unaffected.
+    enabled: ${OPERONIX_AI_ENABLED:true}
+    provider: ${OPERONIX_AI_PROVIDER:gemini}
+    api-key: ${OPERONIX_AI_API_KEY:}
+    model: ${OPERONIX_AI_MODEL:gemini-2.0-flash}
+    base-url: ${OPERONIX_AI_BASE_URL:https://generativelanguage.googleapis.com}
+    timeout: ${OPERONIX_AI_TIMEOUT:20s}
+    max-output-tokens: ${OPERONIX_AI_MAX_OUTPUT_TOKENS:700}
+    default-daily-query-limit: ${OPERONIX_AI_DAILY_LIMIT:100}
   default-due-days: 14
   quote-validity-days: 14
   max-series-occurrences: 26
