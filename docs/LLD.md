@@ -890,8 +890,9 @@ entity's base currency at that day's rate. A missing rate fails with
 - P1a-7 (country-aware address model) and P1a-8 (fiscal-year *rendering*) are partially delivered:
   `address_format`/postal validation remain unenforced, and the fiscal-year setting is stored but not
   yet used by reports.
-- P1a-9 (payment reversals as `payment_reversal` rows) keeps the existing delete-the-payment behaviour
-  and adds base-currency tracking; the immutable reversal ledger remains a P1b item.
+- P1a-9 (payment reversals as `payment_reversal` rows) shipped in P1a as delete-the-payment with
+  base-currency tracking. **Closed in P2d**: reversal now marks the existing row (`reversed_at`,
+  `reversed_by`) instead of deleting it — a dedicated ledger table was not needed, see §21.1.
 - P1a-10 (payment gateway abstraction) was not started, as approved.
 
 ---
@@ -1010,3 +1011,87 @@ was given; an ungrounded reply is discarded in favour of the deterministic summa
 | `ai.AiGuardTest` (4) | intent parsing: whitelisted metrics only, relative ranges, unknown subject rejection, dimension extraction |
 
 `mvn test` → **66 tests, 0 failures** (JDK 21, embedded PostgreSQL 16).
+
+---
+
+## 21. P2c/P2d — acceptance hardening (implemented)
+
+### 21.1 Payment reversal is a mark, not a delete
+
+`DELETE /api/v1/invoices/{invoiceId}/payments/{paymentId}` (OWNER/ADMIN) sets `payment.reversed_at` and
+`payment.reversed_by` and recomputes `invoice.amount_paid` by summing the payments where
+`reversed_at IS NULL` — never by subtracting, so a repeated or adjusted reversal cannot drift the stored
+balance away from the rows behind it. Reversing an already-reversed payment returns
+`409 CONFLICT`. The invoice response carries `reversedAt`/`reversedBy` in `payments[]`, and the UI lists
+the row struck through with a "Reversed" badge and the reversal timestamp.
+
+Every money aggregate filters reversed rows: `PaymentRepository.sumBetween/findAllBetween/
+revenueByCustomer` (owner dashboard, reports), the analytics rollup `PAYMENTS_SQL`
+(`metric_daily.payments_collected`), and the invoice balance itself.
+
+### 21.2 Analytics refresh is concurrency-safe
+
+`AnalyticsRollupRepository.rebuild` runs inside the caller's transaction (every analytics read is
+`@Transactional`) and first takes `pg_try_advisory_xact_lock` keyed on the workspace. A second concurrent
+rebuild writes nothing and reads the rows the first one is producing, instead of interleaving its own
+delete/insert on the same keys. The batch insert additionally uses
+`ON CONFLICT (tenant_id, metric_key, dimension_type, dimension_key, day) DO UPDATE`, so a rollup write can
+never turn a read into a `409`/`500`; both rebuilds compute from the same source rows, so the value
+converges either way. Regression: `AnalyticsFlowIT.parallelAnalyticsCallsShareOneRollupInsteadOfFailing`
+fires nine concurrent overview/trend/breakdown requests on a cold rollup.
+
+### 21.3 Public registration has no request tenant
+
+`/auth/register` is `permitAll`, but the JWT filter still installs the session's tenant when a caller
+presents a valid bearer token. The tenant guard then rejects the new workspace's *own* rows
+(`app_user`, audit events) and the call failed with `500 INTERNAL_ERROR`. `AuthService.register` now
+clears `TenantContext` for the duration of provisioning and restores it afterwards, because a
+create-workspace call genuinely has no request tenant. Regression:
+`AuthFlowIT.registeringAnotherWorkspaceWhileSignedInSucceedsAndStaysIsolated`.
+
+### 21.4 Verified behaviour (session 8)
+
+| Area | Evidence |
+| --- | --- |
+| Fresh migration | empty database → Flyway V1…V7, `ddl-auto=validate` on start |
+| Upgrade migration | V3 database carrying P1a documents (1 invoice 319.34, 1 quote 319.34) → V4…V7, totals unchanged; V6 → V7 on the live database |
+| Lifecycle over HTTP | `node frontend/scripts/smoke.mjs` → SEED OK (quote 319.34, invoice 319.34, partial 100 → balance 219.34 → paid, cross-tenant 404, anonymous 401) |
+| Browser journeys | login, onboarding steps, customer/quote/job/expense/labour/timer/invoice/payment/reversal, analytics, AI assistant, technician scope, mobile width |
+| Financial reconciliation | quote 360 − 20 + 28.05 = 368.05; invoice paid 50 / balance 318.05; job cost 42.50 material → profit 325.55, margin 88.45%; rollup revenue 773.99 = invoiced total 773.99 for the workspace |
+| Regression suite | `mvn verify` → 68 tests, 0 failures; `npm run typecheck` → clean; `npm run build` → 452.01 kB JS |
+| API acceptance probes | 22/22: reversal trail, repeated reversal 409, technician 403 on invoices/analytics/audit/team/payments/void, cross-tenant 404, 9 concurrent analytics reads 200, anonymous 401 |
+| Browser responsiveness | invoice list/detail and the job drawer at 390 px carry no document-level horizontal scroll; wide tables scroll inside their own card |
+
+### 21.4.1 Defects fixed in the acceptance pass
+
+| Defect | Evidence | Fix |
+| --- | --- | --- |
+| The job drawer hid **Create invoice** as soon as a job was `COMPLETED`, which is exactly when invoicing happens; the backend accepts it (`requireInvoiceable` only refuses `CANCELLED`). | Completed J-2026-0004, drawer offered only “Start timer / Record expense / Close”. | Gate is now `job.status !== "CANCELLED"`; the job was then invoiced from the drawer (INV-2026-0003, 389.70). |
+| The drawer rendered the job date from the **UTC** day but the time in the workspace zone, so a Los Angeles workspace showed “Nov 2, 2026 · 7:30 PM” for an instant that is Nov 1, 19:30 there. | J-2026-0004 (`2026-11-02T03:30Z`) rendered as Nov 2 while `formatTime` rendered 7:30 PM. | `formatCalendarDate(value, timezone)` in `lib/format.ts` converts the instant before formatting; the drawer and its subtitle use it. `formatDate` stays for date-only values such as issue dates. |
+| A rejected over-payment was titled “Something went wrong”, implying a system failure. | Paying 500 against a 389.70 balance. | The validation heuristic in `ErrorBanner` also recognises “remaining balance”/“already”, so the banner reads “Check the highlighted fields”. |
+
+### 21.5 Known limitations recorded, not fixed
+
+- Labour cost uses whole minutes (`Duration.toMinutes()`), so a sub-minute timer entry costs `$0.00` and
+  `job_cost.labor_cost` stays zero for it.
+- The onboarding timezone defaults to the **browser** timezone; the country reference data carries
+  currency/locale only, so choosing Japan from a device set to another zone needs a manual timezone edit.
+- There is no idempotency key on `POST /invoices/{id}/payments`; the dialog's pending state prevents the
+  common double-click (verified: two synchronous clicks created one payment), but a retried request from a
+  flaky client would record twice.
+- Analytics rollup rows are per tenant and built lazily on read, so a workspace that never opens analytics
+  has an empty `metric_daily` until the first read or the scheduled job runs.
+- Scheduling inputs (`datetime-local` in the quote conversion, job and payment dialogs) are interpreted in
+  the **device** time zone, while every display uses the workspace zone. With device and workspace in the
+  same zone — the normal case — this is invisible; a device set to IST scheduling “09:00” for a Los
+  Angeles workspace produced a 19:30 local visit. Converting the input to the workspace zone is a
+  behaviour change that needs an owner decision, so it is recorded here rather than changed.
+- `revenue` is defined in the metric catalogue as the sum of issued invoice totals, so job profit and
+  margin include any tax collected on behalf of a tax authority. This is the documented model; a
+  net-of-tax basis would be a definition change, not a defect fix.
+- The customer detail page still renders `createdAt`/`updatedAt` with the date-only helper, so a customer
+  created in the last hours of a UTC day can show the next day's date in a westward workspace. The same
+  mechanism as the fixed job-drawer defect, but it was not reproduced on live data.
+- Line “Total” cells on an invoice show quantity × price plus tax while the invoice discount reduces the
+  tax base, so their sum does not equal the invoice total when a discount exists (INV-2026-0001: lines 433.00
+  vs total 405.94). The summary shows the authoritative figures; the column mixes bases.

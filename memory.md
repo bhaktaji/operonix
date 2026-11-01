@@ -6,10 +6,10 @@
 
 | Field | Value |
 | --- | --- |
-| Last updated | 2026-11-01 (session 7) |
-| Current phase | **P1b + P2a + P2b COMPLETE** — costing engine, business intelligence and Operonix AI implemented and verified on top of P1a |
-| Next phase | **P3 candidates** (payment capture, email/SMS delivery, customer portal, attachments). No cloud resource created; nothing deployed |
-| Overall status | Working end-to-end locally: lead-to-cash workflow, per-job costing, metric-catalogue analytics and an optional AI assistant. Backend 66 tests green on JDK 21; frontend `tsc -b && vite build` green |
+| Last updated | 2026-11-01 (session 8) |
+| Current phase | **P2c + P2d COMPLETE** — end-to-end acceptance on real PostgreSQL 16 and a browser session, plus the security/reliability findings that pass surfaced |
+| Next phase | **P3 candidates** (payment capture, email/SMS delivery, customer portal, attachments, Playwright suite). No cloud resource created; nothing deployed |
+| Overall status | Working end-to-end locally against PostgreSQL 16 (Flyway V1–V7): lead-to-cash, per-job costing, analytics, AI assistant. Backend 68 tests green on JDK 21; frontend `tsc -b && vite build` green. `master` = `8764258` + this session's fixes |
 
 ---
 
@@ -666,3 +666,75 @@ and API-level integration tests only. Docker/GCP remain unbuilt/unapplied as bef
 - `exchange_rate` remains global per date (P1a design).
 - Next agent: P3 candidates are payment capture, notifications, customer portal, attachments, and a
   Playwright smoke suite. Do not start them without owner approval.
+
+## 16. Session 8 — P2c acceptance + P2d audit (COMPLETE, PUSHED)
+
+### 16.1 What this session verified
+
+| Check | Evidence | Result |
+| --- | --- | --- |
+| Fresh migration | Empty database `operonix_fresh` → Flyway V1…V7, `ddl-auto=validate` on boot | PASS |
+| Upgrade V6 → V7 | `operonix_v7check`: migrated to target 6, seeded tenant/user/customer/invoice (118.00, paid 50.00) + payment (50.00, ref `cash-50`), then started the app → V7 applied in 0.055 s; payment still 50.00/−/−, invoice still total 118.00, paid 50.00, `PARTIALLY_PAID`; `reversed_at`/`reversed_by`/`reversal_reason` and `ix_payment_active` present | PASS |
+| Upgrade V3 → V7 | `operonix_upgrade` keeps its P1a documents (invoice 319.34, quote 319.34) through V4…V7 | PASS |
+| Lead-to-cash in the browser | New customer → service location → quote (Q-2026-0004: 2 × 180 = 360, tax 29.70, total 389.70) → accept → convert to job (J-2026-0004) → expense 42.50 → start → complete → invoice INV-2026-0003 (389.70) → send → payment 100 (balance 289.70) → reverse (balance 389.70, status `SENT`) | PASS |
+| Payment reversal in PostgreSQL | `payment.amount = 100.00`, `reversed_at` and `reversed_by` set, row retained; `invoice.amount_paid = 0.00`, status `SENT`; audit trail `INVOICE_CREATED`, `INVOICE_SENT`, `PAYMENT_RECORDED`, `PAYMENT_REVERSED` | PASS |
+| Repeated reversal | Second `DELETE …/payments/{id}` → `409`; balance unchanged | PASS |
+| Costing | J-2026-0004 costing flips from “Incomplete inputs / Profit is not available” to “Complete” once the invoice exists: revenue 389.70 − materials 42.50 = profit 347.20, margin 89.09% | PASS |
+| API acceptance probes | 22/22 (reversal trail, technician 403 on invoices/analytics/audit/team/payment/void, technician 200 on `/jobs` and the money-free dashboard, cross-tenant 404 on read/pay/void, 9 concurrent analytics reads all 200, anonymous 401) | PASS |
+| Validation and error states | Empty customer form → “Check the highlighted fields” + “must not be blank”; quote without a location → “add a service location for this customer first”; job conversion without a technician → “Assign at least one technician”; over-payment → “The remaining balance is $389.70.” | PASS |
+| Responsive | Invoice list, invoice detail, payment dialog and the job drawer at 390 px: no document-level horizontal scroll, wide tables scroll inside their card | PASS |
+| Backend regression | `mvn verify` → 68 tests, 0 failures | PASS |
+| Frontend | `npm run typecheck` clean; `npm run build` → 452.01 kB JS / 36.26 kB CSS | PASS |
+
+### 16.2 Defects fixed
+
+1. **`Create invoice` was hidden on completed jobs** (`JobDetail.tsx`). The backend only refuses a
+   cancelled job or a second active invoice, so the drawer made the normal billing step impossible
+   unless the user invoiced before finishing. Gate is now `job.status !== "CANCELLED"`.
+2. **Job drawer showed the wrong date** — the date came from the UTC day while the time was converted to
+   the workspace zone (Los Angeles workspace: “Nov 2, 7:30 PM” for an instant that is Nov 1, 19:30). New
+   `formatCalendarDate(value, timezone)` in `lib/format.ts` is used by the drawer and its subtitle;
+   `formatDate` remains for date-only values.
+3. **Validation rejections titled “Something went wrong”** — `ErrorBanner`'s heuristic now also matches
+   “remaining balance”/“already”, so an over-payment reads “Check the highlighted fields”.
+
+Reversal and analytics-concurrency defects (`8764258`) and the register-with-active-session 500
+(`e1eabb7`) were fixed earlier in the same acceptance cycle.
+
+### 16.3 Commit chain
+
+| Commit | Content |
+| --- | --- |
+| `e1eabb7` | P2c — defects found on real PostgreSQL (register tenant context, banner, quote overflow, scripts) |
+| `8764258` | P2d — payment reversal trail (V7) and concurrency-safe rollup refresh |
+| (this session) | Job invoicing gate, workspace-zone job dates, banner wording, ERD §11, LLD §21, this section |
+
+### 16.4 Open risks carried forward (accepted, not fixed)
+
+- Scheduling dialogs interpret `datetime-local` in the **device** zone while display uses the workspace
+  zone. Same-zone devices are unaffected; cross-zone devices schedule at the wrong wall-clock time.
+  Needs a product decision before changing.
+- `revenue` is the sum of issued invoice totals, so profit/margin include tax collected. Documented in
+  the metric catalogue; a net-of-tax basis would be a definition change.
+- Customer detail renders `createdAt`/`updatedAt` with the date-only helper (possible off-by-one day in
+  westward workspaces, not reproduced).
+- Invoice line “Total” cells are tax-inclusive while the discount reduces the tax base, so their sum
+  differs from the invoice total when a discount exists.
+- No idempotency key on `POST /invoices/{id}/payments`; the dialog's pending state prevents double
+  clicks but not client retries.
+- Labour cost uses whole minutes, so a sub-minute work log costs 0.00.
+- No automated browser suite; this session's journeys were driven by hand through the preview panel.
+
+### 16.5 How to resume
+
+1. Read this section, `docs/LLD.md` §21, `docs/ERD.md` §11.
+2. Backend: `cd backend && mvn verify` (needs JDK 21 on `PATH`; embedded PostgreSQL, no server needed).
+3. Frontend: `cd frontend && npm run typecheck && npm run build`.
+4. Live stack: `mvn -DskipTests package` then
+   `java -jar target/operonix-api.jar --spring.profiles.active=dev --server.port=8090 --server.address=127.0.0.1`
+   and `VITE_API_PROXY_TARGET=http://localhost:8090 npm run dev` in `frontend/`.
+   Local PostgreSQL 16 is at `localhost:5432` (database `operonix`, user/password `operonix`).
+   Never bind port 8080 (DocSync runs there).
+5. Demo workspace: `owner+026023@harborclean.example` / `Harbor-Clean-2026` (technician
+   `marisol+026023@harborclean.example` / `Fieldwork9Clean`). These exist only in the local database.
+6. P3 has not been started; nothing is deployed and no cloud resource exists.

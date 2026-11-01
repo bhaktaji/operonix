@@ -529,11 +529,20 @@ Index: `ix_invoice_line_invoice (invoice_id, position)`, unique `uq_invoice_line
 | `reference` | varchar(120) | NULL |
 | `paid_at` | timestamptz | NOT NULL |
 | `recorded_by` | uuid | NOT NULL FK → `app_user(id)` |
+| `reversed_at` | timestamptz | NULL — set when the payment is reversed (V7) |
+| `reversed_by` | uuid | NULL FK → `app_user(id)` ON DELETE SET NULL (V7) |
+| `reversal_reason` | varchar(280) | NULL, reserved for a stated reason (V7) |
 | `created_at` | timestamptz | NOT NULL |
 
 Index: `ix_payment_tenant_invoice (tenant_id, invoice_id)`; `ix_payment_tenant_paid_at (tenant_id, paid_at)`
-for revenue reporting. Payments are immutable rows; reversal deletes the row and recomputes the
-invoice, leaving an audit event (v1).
+for revenue reporting; `ix_payment_active (tenant_id, invoice_id) WHERE reversed_at IS NULL` for the
+live-payments path (V7).
+
+**Reversal is a mark, never a delete.** A payment row is immutable once written: reversing sets
+`reversed_at`/`reversed_by`, the invoice recomputes `amount_paid` from the rows still active, and every
+money aggregate filters `reversed_at IS NULL`. The row therefore stays on the invoice timeline, so a
+reconciliation of the invoice against the audit trail and a bank statement both account for the same
+cash, including money that was refunded.
 
 ### 3.14 `audit_event`
 
@@ -621,7 +630,7 @@ beyond a hashed/derived caller key.
 | job → job_assignment | 1:N | CASCADE | Unassign endpoint |
 | job → invoice | 1:N | RESTRICT | At most one non-void invoice per job (partial unique) |
 | invoice → invoice_line | 1:N | CASCADE | Lines replaced while DRAFT |
-| invoice → payment | 1:N | RESTRICT | Payments removed only via audited reversal |
+| invoice → payment | 1:N | RESTRICT | Payments are never removed: a reversal marks the row (V7) and the audit trail records it |
 | service_item → quote_line/invoice_line | 1:N | SET NULL | Historical lines snapshot description/price |
 
 **Cross-tenant safety:** every FK that points at a tenant-owned row is paired with an application
@@ -937,3 +946,27 @@ erDiagram
   may be regenerated at any time.
 - AI tables never participate in a financial calculation; deleting all three leaves every number in
   product unchanged.
+
+---
+
+## 11. P2d — payment reversal trail (V7, implemented)
+
+`V7__payment_reversal_trail.sql` is additive: three nullable columns on `payment`, one FK and one
+partial index. No existing row is rewritten, so a V6 database upgrades with its payments, invoices and
+audit events untouched (verified against a V3 database carrying P1a-era documents: totals unchanged
+after migrating to V7).
+
+| Change | Why |
+| --- | --- |
+| `payment.reversed_at`, `reversed_by`, `reversal_reason` | Keep the record of cash taken and refunded instead of deleting it |
+| `fk_payment_reversed_by` → `app_user(id) ON DELETE SET NULL` | A deactivated user must not remove the record of who reversed a payment |
+| `ix_payment_active (tenant_id, invoice_id) WHERE reversed_at IS NULL` | Balance sums, invoice timelines and cash-collected reporting only read live rows |
+
+Invariants now enforced in code and covered by `SalesFlowIT`:
+
+- `invoice.amount_paid` equals the sum of that invoice's payments with `reversed_at IS NULL`.
+- A reversed payment is returned by the invoice API with `reversedAt`/`reversedBy` and rendered on the
+  timeline as "Reversed", but contributes nothing to the balance or to reporting.
+- Reversing an already-reversed payment is `409 CONFLICT`; the balance cannot be subtracted twice.
+- `metric_daily` (`payments_collected`) and the dashboard's revenue exclude reversed rows, so a
+  refunded payment never counts as collected cash.

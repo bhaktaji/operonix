@@ -11,7 +11,7 @@ import { Modal } from "@/components/ui/Modal";
 import { useToast } from "@/components/ui/toast";
 import { statusTone } from "@/components/ui/cn";
 import { JobCostingPanel } from "@/components/JobCostingPanel";
-import { formatDate, formatTime, labelize } from "@/lib/format";
+import { formatCalendarDate, formatTime, labelize } from "@/lib/format";
 
 export function JobDetail({
   open,
@@ -119,11 +119,13 @@ export function JobDetail({
           <Badge tone={statusTone(job.status)}>{labelize(job.status)}</Badge>
         </span>
       }
-      description={`${job.title} · ${formatDate(job.scheduledStart)}`}
+      description={`${job.title} · ${formatCalendarDate(job.scheduledStart, tenant?.timezone)}`}
       footer={
         <>
           <Button variant="outline" type="button" onClick={onClose}>Close</Button>
-          {canManage && job.status !== "COMPLETED" && job.status !== "CANCELLED" && (
+          {/* Invoicing is normal after completion — the backend only refuses a cancelled job or a second
+              active invoice — so the action must not disappear when the work is finished. */}
+          {canManage && job.status !== "CANCELLED" && (
             <Button
               variant="outline"
               icon={<CircleDollarSign className="h-4 w-4" />}
@@ -197,7 +199,9 @@ export function JobDetail({
           <div>
             <p className="text-[11px] font-semibold uppercase tracking-[0.12em] text-ink-400">Window</p>
             <p className="mt-1 text-sm text-ink-800">
-              {formatDate(job.scheduledStart)} · {formatTime(job.scheduledStart, tenant?.timezone)} –{" "}
+              {formatCalendarDate(job.scheduledStart, tenant?.timezone)} · {
+                formatTime(job.scheduledStart, tenant?.timezone)
+              }{" – "}
               {formatTime(job.scheduledEnd, tenant?.timezone)}
             </p>
           </div>

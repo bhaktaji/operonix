@@ -112,6 +112,27 @@ export function formatDate(value: string | null | undefined, locale?: string): s
   }).format(new Date(Date.UTC(year, month - 1, day)));
 }
 
+/**
+ * Date of an instant, rendered in the workspace's time zone. Unlike `formatDate` (which formats a
+ * date-only value such as an issue date, always as written) this converts the instant first, so the
+ * date always belongs to the same day as the time shown next to it.
+ */
+export function formatCalendarDate(
+  value: string | null | undefined,
+  timezone?: string,
+  locale?: string,
+): string {
+  if (!value) {
+    return "—";
+  }
+  return new Intl.DateTimeFormat(locale ?? activeLocale, {
+    timeZone: timezone,
+    month: "short",
+    day: "numeric",
+    year: "numeric",
+  }).format(new Date(value));
+}
+
 export function formatDateTime(value: string | null | undefined, timezone?: string, locale?: string): string {
   if (!value) {
     return "—";

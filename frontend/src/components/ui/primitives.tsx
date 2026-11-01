@@ -213,7 +213,7 @@ export function Skeleton({ className }: { className?: string }) {
  * is shown once here while each field carries its own message.
  */
 export function ErrorBanner({ title, message }: { title?: string; message: string }) {
-  const validation = /invalid|must not be blank|must be|is required/i.test(message);
+  const validation = /invalid|must not be blank|must be|is required|remaining balance|already/i.test(message);
   const heading = title ?? (validation ? "Check the highlighted fields" : "Something went wrong");
   return (
     <div
