@@ -575,7 +575,12 @@ profile correctly overrides an explicit rate — the initial test expectation wa
 | `1fbb22b` | P1b — costing engine (labour, vendors, expenses, job profitability) |
 | `cd60279` | P2a — analytics rollups, metric catalogue and drill-down |
 | `0f20984` | P2b — Operonix AI (assistant, insights, quotation assistance, quotas, audit) |
-| *(next commit)* | Documentation reconciliation — HLD §16, LLD §19, ERD §10, README rewrite, this section |
+| `e9b0abc` | Documentation reconciliation — HLD §16, LLD §19, ERD §10, README rewrite, this section |
+
+Remote: `origin` = `https://github.com/bhaktaji/operonix.git`, branch `master`. After this session's push
+`master` = `e9b0abc` (P0 `da397f9` and P1a `1d873ef` were already on the remote from before). The PAT
+that a previous session had embedded in `.git/config` was removed from the remote URL; pushes now rely
+on the machine's credential manager, and no token appears in any tracked file.
 
 ### 15.2 P1b — costing engine
 
