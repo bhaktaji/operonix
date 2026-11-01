@@ -243,6 +243,9 @@ export interface Payment {
   paidAt: string;
   recordedBy: string;
   createdAt: string;
+  /** Set when the payment was reversed; the row stays on the timeline but no longer counts. */
+  reversedAt?: string | null;
+  reversedBy?: string | null;
 }
 
 export interface Invoice {

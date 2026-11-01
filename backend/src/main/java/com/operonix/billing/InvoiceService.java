@@ -284,20 +284,38 @@ public class InvoiceService {
         return InvoiceDtos.PaymentResponse.from(payment);
     }
 
+    /**
+     * Reverses a recorded payment. The payment is marked, never deleted, so the invoice timeline and
+     * the money reports keep an honest record of the money that was taken and given back; the balance
+     * is recomputed from the payments that are still active.
+     */
     @Transactional
     public InvoiceDtos.Response reversePayment(UUID invoiceId, UUID paymentId) {
         Invoice invoice = require(invoiceId);
         Payment payment = payments.findByIdAndTenantIdAndInvoiceId(paymentId, invoice.getTenantId(), invoiceId)
                 .orElseThrow(() -> ApiException.notFound("Payment"));
+        if (payment.isReversed()) {
+            throw ApiException.conflict(ErrorCode.CONFLICT,
+                    "this payment has already been reversed");
+        }
         InvoiceStatus priorStatus = invoice.getStatus();
-        invoice.getPayments().remove(payment);
-        invoice.setAmountPaid(MoneyCalculator.money(invoice.getAmountPaid().subtract(payment.getAmount())));
+        payment.setReversedAt(Instant.now());
+        payment.setReversedBy(currentUser.id());
+
+        // Recompute instead of subtracting, so a repeated reversal or an adjusted payment can never
+        // leave the stored amount paid out of step with the rows behind it.
+        BigDecimal activePaid = invoice.getPayments().stream()
+                .filter(active -> !active.isReversed())
+                .map(Payment::getAmount)
+                .reduce(BigDecimal.ZERO, BigDecimal::add);
+        invoice.setAmountPaid(MoneyCalculator.money(activePaid));
         int baseScale = finance.precision(invoice.getBaseCurrency());
-        invoice.setBaseAmountPaid(MoneyCalculator.money(invoice.getBaseAmountPaid()
-                .subtract(payment.getAmount().multiply(invoice.getFxRate())), baseScale));
+        invoice.setBaseAmountPaid(MoneyCalculator.money(
+                activePaid.multiply(invoice.getFxRate()), baseScale));
         recomputeStatus(invoice, priorStatus);
         audit.record(AuditAction.PAYMENT_REVERSED, "Payment", paymentId,
-                Map.of("invoiceId", invoiceId.toString(), "amount", payment.getAmount()));
+                Map.of("invoiceId", invoiceId.toString(), "amount", payment.getAmount(),
+                        "reversedAt", payment.getReversedAt().toString()));
         return toResponses(List.of(invoice)).getFirst();
     }
 

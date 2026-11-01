@@ -84,6 +84,12 @@ export function InvoiceDetail() {
   const data = invoice.data;
   const isVoid = data.status === "VOID";
   const canRecordPayment = !isVoid && data.balance > 0;
+  // Reversed payments stay on the timeline for the audit trail, but only active ones count as paid,
+  // so the list is driven by every payment while the "recorded" wording counts the live ones.
+  const payments = {
+    all: data.payments,
+    active: data.payments.filter((payment) => !payment.reversedAt).length,
+  };
   const canVoid = !isVoid && data.amountPaid === 0;
 
   return (
@@ -137,7 +143,7 @@ export function InvoiceDetail() {
       )}
 
       <div className="grid gap-4 xl:grid-cols-[1.6fr_1fr]">
-        <div className="space-y-4">
+        <div className="min-w-0 space-y-4">
           <Card className="p-5">
             <div className="grid gap-4 sm:grid-cols-2">
               <div>
@@ -203,7 +209,17 @@ export function InvoiceDetail() {
 
           <SectionCard
             title="Payments"
-            description={data.payments.length === 0 ? "No payments recorded yet" : `${data.payments.length} payment${data.payments.length === 1 ? "" : "s"} recorded`}
+            description={
+              payments.all.length === 0
+                ? "No payments recorded yet"
+                : payments.active === 0
+                  ? `All ${payments.all.length} payment${payments.all.length === 1 ? "" : "s"} reversed`
+                  : `${payments.active} payment${payments.active === 1 ? "" : "s"} recorded${
+                      payments.all.length > payments.active
+                        ? ` · ${payments.all.length - payments.active} reversed`
+                        : ""
+                    }`
+            }
             bodyClassName="p-0"
             actions={canRecordPayment ? (
               <Button size="sm" variant="outline" icon={<CreditCard className="h-3.5 w-3.5" />} onClick={() => setPaymentOpen(true)}>
@@ -211,25 +227,33 @@ export function InvoiceDetail() {
               </Button>
             ) : undefined}
           >
-            {data.payments.length === 0 ? (
+            {payments.all.length === 0 ? (
               <p className="px-5 py-6 text-sm text-ink-400">
                 Payments recorded here update the balance and the invoice status automatically.
               </p>
             ) : (
               <ul className="divide-y divide-sand-100">
-                {data.payments.map((payment) => (
+                {payments.all.map((payment) => (
                   <li key={payment.id} className="flex flex-wrap items-center justify-between gap-3 px-5 py-3">
                     <div>
                       <p className="text-sm font-medium text-ink-900">
-                        {formatMoney(payment.amount, data.currency)}
+                        <span className={payment.reversedAt ? "text-ink-400 line-through" : undefined}>
+                          {formatMoney(payment.amount, data.currency)}
+                        </span>
                         <span className="ml-2 text-[12px] font-normal text-ink-400">{labelize(payment.method)}</span>
+                        {payment.reversedAt && (
+                          <span className="ml-2 align-middle">
+                            <Badge tone="neutral">Reversed</Badge>
+                          </span>
+                        )}
                       </p>
                       <p className="text-[12px] text-ink-500">
                         {formatDateTime(payment.paidAt, tenant?.timezone)}
                         {payment.reference ? ` · ${payment.reference}` : ""}
+                        {payment.reversedAt ? ` · reversed ${formatDateTime(payment.reversedAt, tenant?.timezone)}` : ""}
                       </p>
                     </div>
-                    {hasRole("OWNER", "ADMIN") && !isVoid && (
+                    {!payment.reversedAt && hasRole("OWNER", "ADMIN") && !isVoid && (
                       <Button
                         size="sm"
                         variant="ghost"
@@ -247,7 +271,7 @@ export function InvoiceDetail() {
           </SectionCard>
         </div>
 
-        <div className="space-y-4 xl:sticky xl:top-6 xl:self-start">
+        <div className="min-w-0 space-y-4 xl:sticky xl:top-6 xl:self-start">
           <Card className="p-5">
             <h2 className="font-display text-[15px] font-semibold text-ink-900">Amounts</h2>
             <dl className="mt-4 space-y-2.5 text-sm">

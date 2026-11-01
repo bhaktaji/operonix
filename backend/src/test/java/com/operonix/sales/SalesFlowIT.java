@@ -118,6 +118,29 @@ class SalesFlowIT extends AbstractIntegrationTest {
                 + finalPayment.get("id").asText(), owner, 200);
         assertThat(reversed.get("status").asText()).isEqualTo("PARTIALLY_PAID");
         assertDecimal(reversed.get("balance"), "153.00");
+
+        // A reversal marks the payment, it does not delete it: the money stops counting towards the
+        // balance, but the record of what was taken stays on the invoice timeline and in reports.
+        JsonNode afterReversal = getJson("/api/v1/invoices/" + invoiceId, owner, 200);
+        assertThat(afterReversal.get("payments").size()).isEqualTo(2);
+        JsonNode marked = null;
+        for (JsonNode payment : afterReversal.get("payments")) {
+            if (payment.get("id").asText().equals(finalPayment.get("id").asText())) {
+                marked = payment;
+            }
+        }
+        assertThat(marked).isNotNull();
+        assertThat(marked.get("reversedAt").isNull()).isFalse();
+        assertThat(marked.get("reversedBy").asText()).isEqualTo(owner.userId().toString());
+        assertDecimal(afterReversal.get("amountPaid"), "100.00");
+
+        // Reversing the same payment twice must be rejected rather than double-subtracting.
+        deleteJson("/api/v1/invoices/" + invoiceId + "/payments/" + finalPayment.get("id").asText(),
+                owner, 409);
+
+        // Reversed cash is not collected cash.
+        assertDecimal(getJson("/api/v1/reports/dashboard", owner, 200).get("revenueThisMonth"),
+                "100.00");
     }
 
     @Test

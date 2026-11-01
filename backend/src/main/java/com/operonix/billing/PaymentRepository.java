@@ -18,9 +18,13 @@ public interface PaymentRepository extends JpaRepository<Payment, UUID> {
 
     Optional<Payment> findByIdAndTenantIdAndInvoiceId(UUID id, UUID tenantId, UUID invoiceId);
 
+    // Reversed payments stay in the table for the audit trail, so every money aggregate has to
+    // exclude them explicitly; otherwise a refunded payment would keep counting as collected cash.
+
     @Query("""
             select coalesce(sum(p.amount), 0) from Payment p
             where p.tenantId = :tenantId and p.paidAt >= :from and p.paidAt < :to
+              and p.reversedAt is null
             """)
     BigDecimal sumBetween(@Param("tenantId") UUID tenantId, @Param("from") Instant from,
                           @Param("to") Instant to);
@@ -28,6 +32,7 @@ public interface PaymentRepository extends JpaRepository<Payment, UUID> {
     @Query("""
             select p from Payment p
             where p.tenantId = :tenantId and p.paidAt >= :from and p.paidAt < :to
+              and p.reversedAt is null
             """)
     List<Payment> findAllBetween(@Param("tenantId") UUID tenantId, @Param("from") Instant from,
                                  @Param("to") Instant to);
@@ -35,6 +40,7 @@ public interface PaymentRepository extends JpaRepository<Payment, UUID> {
     @Query("""
             select p.invoice.customerId, coalesce(sum(p.amount), 0) from Payment p
             where p.tenantId = :tenantId and p.paidAt >= :from and p.paidAt < :to
+              and p.reversedAt is null
             group by p.invoice.customerId
             """)
     List<Object[]> revenueByCustomer(@Param("tenantId") UUID tenantId, @Param("from") Instant from,

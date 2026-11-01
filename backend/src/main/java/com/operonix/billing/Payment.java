@@ -43,4 +43,22 @@ public class Payment extends TenantEntity {
 
     @Column(name = "recorded_by", nullable = false, updatable = false)
     private UUID recordedBy;
+
+    /**
+     * A reversal marks the payment instead of deleting it: the money is no longer counted towards the
+     * invoice balance, but the record of what was taken stays on the timeline and in reporting
+     * (which filters on {@code reversedAt is null}).
+     */
+    @Column(name = "reversed_at")
+    private Instant reversedAt;
+
+    @Column(name = "reversed_by")
+    private UUID reversedBy;
+
+    @Column(name = "reversal_reason", length = 280)
+    private String reversalReason;
+
+    public boolean isReversed() {
+        return reversedAt != null;
+    }
 }

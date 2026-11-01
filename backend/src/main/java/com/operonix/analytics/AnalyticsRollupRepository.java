@@ -57,6 +57,18 @@ public class AnalyticsRollupRepository {
      * @return number of metric_daily rows written
      */
     public int rebuild(UUID tenantId, String workspaceCurrency, LocalDate from, LocalDate to) {
+        // An analytics page issues several calls at once (overview, trend, breakdown) and each may
+        // trigger a refresh. Serialise rebuilds per workspace: otherwise two refreshes interleave
+        // their delete/insert over the same rows and one of them fails on uq_metric_daily, turning a
+        // read into a 409. The transaction-scoped lock is released when the caller commits.
+        Boolean locked = jdbc.queryForObject(
+                "select pg_try_advisory_xact_lock(hashtext('operonix.analytics'), hashtext(?))",
+                Boolean.class, tenantId.toString());
+        if (!Boolean.TRUE.equals(locked)) {
+            // Another request is already rebuilding this workspace; its rows are about to be visible.
+            return 0;
+        }
+
         jdbc.update("delete from metric_daily where tenant_id = ? and day between ? and ?",
                 tenantId, Date.valueOf(from), Date.valueOf(to));
 
@@ -79,11 +91,20 @@ public class AnalyticsRollupRepository {
         written += write(rows, tenantId, MetricDefinition.EXPENSE_TOTAL, workspaceCurrency, expenses);
 
         Timestamp now = Timestamp.from(java.time.Instant.now());
+        // Upsert as well as the lock: the insert must never be able to fail a read path, and a
+        // concurrent writer can only ever write the same value computed from the same source rows.
         jdbc.batchUpdate("""
                 insert into metric_daily (id, tenant_id, metric_key, dimension_type, dimension_key,
                                           dimension_id, dimension_label, day, currency, value,
                                           created_at, updated_at, version)
                 values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0)
+                on conflict (tenant_id, metric_key, dimension_type, dimension_key, day) do update
+                   set dimension_id = excluded.dimension_id,
+                       dimension_label = excluded.dimension_label,
+                       currency = excluded.currency,
+                       value = excluded.value,
+                       updated_at = excluded.updated_at,
+                       version = metric_daily.version + 1
                 """, rows);
 
         jdbc.update("""
@@ -234,7 +255,8 @@ public class AnalyticsRollupRepository {
             join invoice i on i.id = p.invoice_id and i.tenant_id = p.tenant_id
             left join job j on j.id = i.job_id and j.tenant_id = i.tenant_id
             left join business_location bl on bl.id = j.location_id
-            where p.tenant_id = ? and (p.paid_at at time zone 'UTC')::date between ? and ?
+            where p.tenant_id = ? and p.reversed_at is null
+              and (p.paid_at at time zone 'UTC')::date between ? and ?
             group by 1, 2, 3, 4
             """;
 

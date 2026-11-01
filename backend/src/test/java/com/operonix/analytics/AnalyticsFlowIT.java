@@ -6,11 +6,18 @@ import org.junit.jupiter.api.Test;
 
 import java.math.BigDecimal;
 import java.time.LocalDate;
+import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
 import java.util.UUID;
+import java.util.concurrent.CountDownLatch;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
+import java.util.concurrent.Future;
+import java.util.concurrent.TimeUnit;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
 
 /**
  * P2a: the dashboards must reconcile with the records they summarise, and must be honest about what
@@ -158,6 +165,66 @@ class AnalyticsFlowIT extends AbstractIntegrationTest {
             throw new AssertionError("Metric has no value: " + key);
         }
         return node;
+    }
+
+    /**
+     * The analytics page fires overview, trend and breakdown together on a cold rollup, so several
+     * requests try to rebuild the same rows. They used to collide on uq_metric_daily and turn the
+     * page into a 409; they must all answer, and leave exactly one row per metric, dimension and day.
+     */
+    @Test
+    void parallelAnalyticsCallsShareOneRollupInsteadOfFailing() throws Exception {
+        Session owner = register("Parallel Metrics Co", "owner@parallelmetrics.example");
+        UUID customer = createCustomer(owner, "Northgate Facilities");
+        UUID location = locationOf(owner, customer);
+        UUID service = createService(owner, "Monthly inspection", "150.00", "0");
+
+        JsonNode quote = postJson("/api/v1/quotes", Map.of(
+                "customerId", customer, "locationId", location,
+                "lines", List.of(Map.of("serviceItemId", service, "quantity", 1))), owner, 201);
+        UUID quoteId = UUID.fromString(quote.get("id").asText());
+        postJson("/api/v1/quotes/" + quoteId + "/send", null, owner, 200);
+        postJson("/api/v1/quotes/" + quoteId + "/accept", null, owner, 200);
+
+        LocalDate today = LocalDate.now();
+        JsonNode job = postJson("/api/v1/quotes/" + quoteId + "/convert", Map.of(
+                "scheduledStart", today + "T09:00:00Z",
+                "scheduledEnd", today + "T10:00:00Z",
+                "technicianIds", List.of(owner.userId())), owner, 201);
+        UUID jobId = UUID.fromString(job.get("id").asText());
+        postJson("/api/v1/jobs/" + jobId + "/transitions", Map.of("to", "IN_PROGRESS"), owner, 200);
+        postJson("/api/v1/jobs/" + jobId + "/transitions", Map.of("to", "COMPLETED"), owner, 200);
+        postJson("/api/v1/jobs/" + jobId + "/invoice", Map.of(), owner, 201);
+
+        String[] paths = {
+                "/api/v1/analytics/overview",
+                "/api/v1/analytics/trend?metric=revenue&granularity=day",
+                "/api/v1/analytics/breakdown?dimension=LOCATION"
+        };
+        ExecutorService pool = Executors.newFixedThreadPool(9);
+        CountDownLatch gate = new CountDownLatch(1);
+        List<Future<Integer>> results = new ArrayList<>();
+        try {
+            for (int i = 0; i < 9; i++) {
+                String path = paths[i % paths.length];
+                results.add(pool.submit(() -> {
+                    gate.await();
+                    return mvc.perform(get(path)
+                                    .header("Authorization", "Bearer " + owner.accessToken()))
+                            .andReturn().getResponse().getStatus();
+                }));
+            }
+            gate.countDown();
+            for (Future<Integer> result : results) {
+                assertThat(result.get(60, TimeUnit.SECONDS)).isEqualTo(200);
+            }
+        } finally {
+            pool.shutdownNow();
+        }
+
+        JsonNode overview = getJson("/api/v1/analytics/overview", owner, 200);
+        assertDecimal(metric(overview, "revenue"), "150.00");
+        assertDecimal(metric(overview, "jobs_completed"), "1");
     }
 
     private void assertDecimal(JsonNode node, String expected) {

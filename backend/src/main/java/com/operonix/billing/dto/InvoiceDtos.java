@@ -91,12 +91,18 @@ public final class InvoiceDtos {
         }
     }
 
+    /**
+     * @param reversedAt set once the payment has been reversed; the payment stays on the invoice
+     *                   timeline and is excluded from the balance and from money reports.
+     */
     public record PaymentResponse(UUID id, BigDecimal amount, String method, String reference,
-                                  Instant paidAt, UUID recordedBy, Instant createdAt) {
+                                  Instant paidAt, UUID recordedBy, Instant createdAt,
+                                  Instant reversedAt, UUID reversedBy) {
 
         public static PaymentResponse from(Payment payment) {
             return new PaymentResponse(payment.getId(), payment.getAmount(), payment.getMethod().name(),
-                    payment.getReference(), payment.getPaidAt(), payment.getRecordedBy(), payment.getCreatedAt());
+                    payment.getReference(), payment.getPaidAt(), payment.getRecordedBy(),
+                    payment.getCreatedAt(), payment.getReversedAt(), payment.getReversedBy());
         }
     }
 
