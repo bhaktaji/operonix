@@ -753,3 +753,187 @@ Indexes: `ix_line_tax_component_line (line_type, line_id)`, `ix_line_tax_compone
   `minor_units` at calculation and formatting time, so no column rewrite is needed for the seeded
   markets.
 - Compound tax components are summed rather than compounded; every seeded jurisdiction is additive.
+
+---
+
+## 10. P1b / P2a / P2b tables (V4, V5, V6 — implemented)
+
+### 10.1 Costing (V4)
+
+**`work_log`** — technician time on a job; open while `end_at IS NULL`.
+
+| Column | Type | Notes |
+| --- | --- | --- |
+| `id` | uuid PK | |
+| `tenant_id` | uuid NOT NULL → `tenant` | isolation key |
+| `job_id` | uuid NOT NULL → `job` ON DELETE CASCADE | |
+| `app_user_id` | uuid NOT NULL → `app_user` | whose time |
+| `start_at`, `end_at` | timestamptz NOT NULL / NULL | `CHECK (end_at IS NULL OR end_at >= start_at)` |
+| `is_manual` | boolean NOT NULL default false | back-entered vs live timer |
+| `notes` | varchar(2000) | |
+
+Indexes: `(tenant_id, job_id, start_at)`, `(tenant_id, app_user_id, start_at)`.
+
+**`vendor`** — suppliers and subcontractors.
+
+| Column | Type | Notes |
+| --- | --- | --- |
+| `tenant_id`, `name` | uuid, varchar(160) | `UNIQUE (tenant_id, lower(name))` |
+| `contact_name`, `email`, `phone`, `tax_number` | optional | |
+| `address` | jsonb | country-aware address, same shape as `service_location.address` |
+| `default_rate` | numeric(12,2) | pre-fills expenses |
+| `payment_terms` | varchar(30) default `NET_30` | |
+| `active` | boolean | soft retire; index `(tenant_id, active)` |
+
+**`expense`** — every recorded cost, job-linked or overhead.
+
+| Column | Type | Notes |
+| --- | --- | --- |
+| `job_id` | uuid NULL → `job` ON DELETE SET NULL | NULL = business overhead |
+| `vendor_id` | uuid NULL → `vendor` | |
+| `amount`, `currency` | numeric(12,2), varchar(3) → `currency` | as invoiced |
+| `fx_rate`, `workspace_amount` | numeric(18,8), numeric(12,2) | frozen conversion, what roll-ups read |
+| `expense_date` | date NOT NULL | rate date and period |
+| `category` | varchar(30) | `CHECK IN ('LABOR','MATERIAL','EQUIPMENT','SUBCONTRACTOR','OTHER')` |
+| `receipt_reference`, `notes`, `created_by` | | |
+
+Constraints: `CHECK (amount > 0)`. Indexes: `(tenant_id, job_id, expense_date DESC)`,
+`(vendor_id)`, `(tenant_id, expense_date DESC)`.
+
+**`job_cost`** — materialised direct-cost roll-up, exactly one row per job.
+
+| Column | Type | Notes |
+| --- | --- | --- |
+| `job_id` | uuid NOT NULL → `job` ON DELETE CASCADE | `UNIQUE (tenant_id, job_id)` |
+| `labor_cost`, `material_cost`, `equipment_cost`, `subcontractor_cost`, `other_cost`, `total_cost` | numeric(12,2) NOT NULL default 0 | |
+| `currency` | varchar(3) → `currency` | workspace currency |
+| `computed_at`, `computed_by` | timestamptz, uuid | provenance of the last rebuild |
+
+Rebuilt (delete + insert), never incremented: `total_cost` is always the sum of the five components,
+so a duplicated write cannot inflate cost.
+
+**Columns added to existing tables:** `app_user.hourly_cost numeric(12,2) default 0`
+(`0` = rate not configured), `service_item.cost numeric(12,2) default 0` (planned unit cost),
+`job.actual_start`/`job.actual_end timestamptz` (derived from work logs).
+
+### 10.2 Analytics (V5)
+
+**`metric_daily`** — derived rollup, rebuildable at any time.
+
+| Column | Type | Notes |
+| --- | --- | --- |
+| `tenant_id` | uuid NOT NULL → `tenant` ON DELETE CASCADE | |
+| `metric_key` | varchar(60) NOT NULL | must exist in `MetricDefinition` |
+| `dimension_type` | varchar(20) | `TOTAL` \| `LOCATION` |
+| `dimension_key`, `dimension_id`, `dimension_label` | varchar(64)/uuid/varchar(160) | `''` for the total row |
+| `day` | date NOT NULL | |
+| `currency` | varchar(3) → `currency` | reporting currency |
+| `value` | numeric(18,4) | 4 dp so percentages and minute totals survive rounding |
+
+`UNIQUE (tenant_id, metric_key, dimension_type, dimension_key, day)` makes the refresh idempotent
+(delete-then-insert the window). Index `(tenant_id, metric_key, day)`.
+
+**`analytics_refresh`** — one row per workspace: `last_refreshed_at`, `range_start`, `range_end`,
+`row_count`. The UI reads it to show staleness; nothing else depends on it.
+
+**Indexes added on existing tables:** partial `(tenant_id, issue_date) WHERE status <> 'VOID'` on
+`invoice`, and `(tenant_id, coalesce(actual_end, scheduled_end))` on `job`.
+
+### 10.3 Operonix AI (V6)
+
+**`ai_settings`** (PK `tenant_id`): `enabled boolean`, `daily_query_limit integer` (`>= 0`), `model`,
+`updated_by`, timestamps.
+
+**`ai_usage`** (PK `tenant_id, day`): `queries`, `blocked`, `tokens_in`, `tokens_out`. The quota is
+enforced in the same statement that increments `queries`, so concurrent requests cannot both pass it.
+
+**`ai_query_log`**: `tenant_id`, `actor_user_id`, `kind` (`REPORTING`/`QUOTE_ASSIST`/`INSIGHTS`),
+`question` varchar(1000), `metric_request jsonb`, `answer` varchar(8000), `provider`, `model`,
+`status` (`OK`/`DEGRADED`/`FAILED`/`QUOTA_EXCEEDED`/`DISABLED`), `error_code`, `tokens_in`,
+`tokens_out`, `latency_ms`, `created_at`. Index `(tenant_id, created_at DESC)`. No monetary column is
+stored here: the answer is reproducible from `metric_request`, so financial state stays in one place.
+
+### 10.4 Relationships added
+
+```mermaid
+erDiagram
+    TENANT ||--o{ WORK_LOG : "owns"
+    TENANT ||--o{ VENDOR : "owns"
+    TENANT ||--o{ EXPENSE : "owns"
+    TENANT ||--o{ METRIC_DAILY : "owns"
+    TENANT ||--o{ AI_SETTINGS : "has one"
+    TENANT ||--o{ AI_USAGE : "per day"
+    TENANT ||--o{ AI_QUERY_LOG : "audits"
+    JOB ||--o{ WORK_LOG : "time entries"
+    JOB ||--o| JOB_COST : "direct cost roll-up"
+    JOB ||--o{ EXPENSE : "job costs"
+    APP_USER ||--o{ WORK_LOG : "logs"
+    VENDOR ||--o{ EXPENSE : "billed"
+    BUSINESS_LOCATION ||--o{ METRIC_DAILY : "dimension"
+
+    WORK_LOG {
+        uuid id PK
+        uuid tenant_id FK
+        uuid job_id FK
+        uuid app_user_id FK
+        timestamptz start_at
+        timestamptz end_at
+    }
+    VENDOR {
+        uuid id PK
+        uuid tenant_id FK
+        varchar name
+        numeric default_rate
+        boolean active
+    }
+    EXPENSE {
+        uuid id PK
+        uuid tenant_id FK
+        uuid job_id FK
+        uuid vendor_id FK
+        numeric amount
+        varchar currency
+        numeric fx_rate
+        numeric workspace_amount
+        varchar category
+    }
+    JOB_COST {
+        uuid id PK
+        uuid tenant_id FK
+        uuid job_id FK
+        numeric total_cost
+        varchar currency
+        timestamptz computed_at
+    }
+    METRIC_DAILY {
+        uuid id PK
+        uuid tenant_id FK
+        varchar metric_key
+        varchar dimension_type
+        date day
+        numeric value
+    }
+    AI_QUERY_LOG {
+        uuid id PK
+        uuid tenant_id FK
+        varchar kind
+        varchar status
+        jsonb metric_request
+        timestamptz created_at
+    }
+```
+
+### 10.5 Integrity rules for the new tables
+
+- `job_cost` and `ai_settings`/`ai_usage`/`analytics_refresh` are keyed by tenant, which makes a second
+  row per job/day impossible by construction rather than by application logic.
+- Deleting a job cascades `work_log`, `job_cost` and `metric_daily` is untouched (rollups are rebuilt);
+  expenses survive with `job_id = NULL` so spend history is not lost with the job.
+- `vendor` rows are never hard-deleted while an expense references them, and the API retires them with
+  `active = false`.
+- `expense.workspace_amount` is stored, not derived on read, so correcting a later FX rate cannot
+  rewrite a closed period.
+- `work_log` rows are the only source of actual duration; `job.actual_start/actual_end` are derived and
+  may be regenerated at any time.
+- AI tables never participate in a financial calculation; deleting all three leaves every number in
+  product unchanged.

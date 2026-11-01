@@ -503,3 +503,80 @@ currency and a single tax rate**, without changing the modular monolith or the r
 Costing (P1b), BI (P2a), Operonix AI (P2b), payment gateway integration, and automated FX feeds.
 Exchange rates are entered by the workspace, and reporting conversion (P2a) will read the snapshots
 written here.
+
+---
+
+## 16. Operonix 2.0 — P1b costing, P2a analytics, P2b AI (implemented)
+
+### 16.1 What the three phases added to the architecture
+
+| Phase | Architectural addition | Still a modular monolith? |
+| --- | --- | --- |
+| P1b | A **costing module** (`com.operonix.global`: work logs, vendors, expenses, `job_cost` roll-ups) that owns everything between a job and its direct cost | Yes — new package inside the same deployable, no new service |
+| P2a | An **analytics module** (`com.operonix.analytics`) with a metric catalogue, a daily rollup table and a scheduled/lazy refresh | Yes — reads the same schema, writes only its own tables |
+| P2b | An **AI module** (`com.operonix.ai`) with an `LlmProvider` port, quota accounting and an audited query log | Yes — AI is an optional adapter over the analytics API, not a source of truth |
+
+Nothing is shared through new databases, queues or caches. The three additions read the existing
+tenant-scoped schema and write only additive tables (`work_log`, `vendor`, `expense`, `job_cost`,
+`metric_daily`, `analytics_refresh`, `ai_settings`, `ai_usage`, `ai_query_log`).
+
+### 16.2 Costing: the numbers the rest of the system depends on
+
+- **Direct job cost** = closed `work_log` minutes × the member's `hourly_cost` + expenses booked to
+  the job + material/equipment quantities taken from the catalogue's `cost`. It is materialised in
+  `job_cost` so invoicing, analytics and AI all read one number instead of re-deriving it.
+- **Recompute is idempotent.** `POST /api/v1/jobs/{id}/costs/recompute` recalculates and upserts the
+  roll-up row inside the write transaction; there is no accumulation path that could double-count.
+- **Incomplete inputs are explicit.** A job whose quote lines have no recorded cost returns
+  `costComplete=false` with a reason list; the API then refuses a profit figure rather than showing
+  100% margin. The UI prints "cost not recorded".
+- **Direct job profit ≠ business net profit.** Analytics labels the metric *Direct job profit* and
+  states that overheads (expenses not attached to a job) are excluded.
+- **Auditability.** Every create/update/delete of a work log, expense or vendor writes an
+  `audit_event` row with before/after values through the existing `AuditService`.
+- **Currency.** Costs are captured in the amount's own currency and converted with the rate frozen at
+  capture time, using the P1a `MoneyCalculator` and the currency's minor units.
+
+### 16.3 Analytics: catalogue first, then rollups
+
+- `MetricDefinition` is the single registry (key, label, unit, formula text, required inputs,
+  rolled-up flag). The API, the UI and the AI all read it, so a metric cannot exist in one place and
+  be missing in another.
+- Rolled-up metrics (`revenue`, `payments_collected`, `invoices_issued`, `jobs_completed`,
+  `job_cost`, `labour_minutes`, `expense_total`) are aggregated per tenant, per day, per business
+  location into `metric_daily` by `AnalyticsRefreshScheduler`/`AnalyticsJobRunner`. Non-rolled-up
+  metrics (profit, receivable, overdue, margin, repeat revenue) are computed live from source rows so
+  they can never drift from the ledger.
+- Refresh is **idempotent and incremental**: a refresh window deletes and re-inserts only the days it
+  covers, and `analytics_refresh` records the window so the UI can show staleness.
+- Every figure reports the **reporting currency** (`*_base` columns converted through the invoice's
+  frozen rate) and flags `currencyConverted` when the workspace mixes currencies.
+- Drill-down endpoints (`/breakdown`, `/jobs`, `/locations`, `/ageing`) return the source rows behind
+  a number, and the UI links each one back to the underlying record.
+- Cloud Run compatibility: the scheduler is a Spring `@Scheduled` job that is safe to run from one
+  instance, and `AnalyticsJobRunner` gives a one-shot entry point for **Cloud Run Jobs**.
+
+### 16.4 Operonix AI: an interpreter, never a calculator
+
+1. The question is parsed by a **deterministic intent parser** (`AiIntent`) into whitelisted metrics,
+   a date range and a dimension. No text-to-SQL, no free-form table access.
+2. `AiService` calls the **analytics service** — the same code path as the dashboard — and receives
+   already-calculated numbers.
+3. Only then is the `LlmProvider` asked to phrase an explanation from a compact, non-PII payload
+   (metric labels, values, period). Figures are never passed *to* the model as something to compute,
+   and the model's prose is never parsed back into numbers.
+4. Quotas and availability are checked **before** any provider call: `ai_settings` per tenant plus
+   `ai_usage` per day. Exhausted quota returns `QUOTA_EXCEEDED` with the built-in narrative, so the
+   user still gets the numbers.
+5. Every request is recorded in `ai_query_log` (question, intent, metrics, tokens, status) for audit.
+6. With no provider key configured, `GeminiProvider` reports "not configured" and the module degrades
+   to template narratives. **Nothing else in the application depends on AI being present.**
+7. Quotation assistance is advisory only: it proposes lines and prices with rationale and assumptions
+   and never writes, prices or sends a quote.
+
+### 16.5 Deployment impact
+
+No new infrastructure. `ai_settings`/`ai_query_log` are ordinary tables; the provider key is an
+environment/Secret Manager value (`OPERONIX_AI_API_KEY`) read by `AiProperties`, and the analytics
+refresh can be scheduled in-process or handed to a Cloud Run Job hitting the same image. Cloud Run's
+statelessness is preserved: no rollup state lives outside PostgreSQL.

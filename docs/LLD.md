@@ -893,3 +893,120 @@ entity's base currency at that day's rate. A missing rate fails with
 - P1a-9 (payment reversals as `payment_reversal` rows) keeps the existing delete-the-payment behaviour
   and adds base-currency tracking; the immutable reversal ledger remains a P1b item.
 - P1a-10 (payment gateway abstraction) was not started, as approved.
+
+---
+
+## 19. P1b costing, P2a analytics, P2b AI (implemented)
+
+### 19.1 Migrations
+
+| Version | File | Contents |
+| --- | --- | --- |
+| V4 | `V4__costing_engine.sql` | `work_log`, `vendor`, `expense`, `job_cost`; `app_user.hourly_cost`; `service_item.cost`; `job.actual_start/actual_end`; indexes on job/date/vendor |
+| V5 | `V5__analytics.sql` | `metric_daily` (tenant, metric, day, location), `analytics_refresh`, two scan indexes on `invoice`/`job` |
+| V6 | `V6__operonix_ai.sql` | `ai_settings`, `ai_usage`, `ai_query_log` + index on `(tenant_id, created_at DESC)` |
+
+All three are additive: no column is dropped, no existing row is rewritten, and every new column has
+a default. Old tenants get `hourly_cost = 0` and `service_item.cost = 0`, which the API interprets as
+"cost not recorded" rather than "free".
+
+### 19.2 Costing API (`com.operonix.global`)
+
+| Method | Path | Roles |
+| --- | --- | --- |
+| GET/POST/PUT | `/api/v1/vendors[/{id}]` | owner, admin, manager |
+| GET | `/api/v1/jobs/{jobId}/costing` | any member of the tenant |
+| GET | `/api/v1/jobs/{jobId}/profitability` | any member of the tenant |
+| POST | `/api/v1/jobs/{jobId}/costs/recompute` | owner, admin, manager |
+| GET/POST | `/api/v1/jobs/{jobId}/work-logs` | any member; a technician may only change *their own* time entries |
+| POST/DELETE | `/api/v1/work-logs/{id}[/stop]` | owner of the log, or office roles |
+| GET/POST | `/api/v1/jobs/{jobId}/expenses` | office roles write |
+| POST | `/api/v1/expenses` | office roles (unattached overhead) |
+| DELETE | `/api/v1/expenses/{id}` | office roles |
+
+Business rules:
+
+1. A work log must belong to the job's tenant; `start < end`; a technician may only create, stop or
+   delete their own entries (office roles may correct anyone's). Overlapping entries are allowed on
+   purpose — split shifts and travel time are legitimate — and labour cost is the sum of closed
+   minutes rather than a span.
+2. Labour cost = `minutes / 60 × hourly_cost`, rounded half-up to the currency's minor units. A member
+   with `hourly_cost = 0` makes labour cost **unknown**, not zero.
+3. Material/equipment cost = `quantity × service_item.cost`; a line whose catalogue item has
+   `cost = 0` is also unknown.
+4. `job_cost` is upserted per job (`tenant_id, job_id` unique) inside the same transaction as the
+   triggering write. `recompute` deletes and re-inserts the row, so running it twice yields the same
+   numbers.
+5. `profitability` returns `available=false` + `reasons[]` when any input is unknown; it never
+   substitutes zero. `directProfit` is revenue − direct cost and is explicitly **not** net profit.
+6. Every mutation writes an `audit_event` (`WORK_LOG_*`, `EXPENSE_*`, `VENDOR_*`, `JOB_COST_RECOMPUTED`).
+
+### 19.3 Analytics API (`com.operonix.analytics`)
+
+| Method | Path | Notes |
+| --- | --- | --- |
+| GET | `/api/v1/analytics/catalogue` | metric keys, labels, units, formulas, required inputs |
+| GET | `/api/v1/analytics/overview?from&to&locationId` | current vs previous period, reporting currency, notes |
+| GET | `/api/v1/analytics/trend?metric&granularity&…` | day/week/month buckets |
+| GET | `/api/v1/analytics/breakdown?dimension&…` | customer, service, team member, location |
+| GET | `/api/v1/analytics/locations` | per-location totals |
+| GET | `/api/v1/analytics/ageing` | 0–30/31–60/61–90/90+ buckets |
+| GET | `/api/v1/analytics/jobs` | per-job revenue, cost, margin, drill-down ids |
+| GET | `/api/v1/analytics/status` | last refresh window and timestamp |
+| POST | `/api/v1/analytics/refresh` | owner/admin/manager; rebuilds a window idempotently |
+
+Class-level `@PreAuthorize("hasAnyRole('OWNER','ADMIN','MANAGER')")`; every query is additionally
+scoped by `tenant_id` from `CurrentUser`, never from a request parameter. Unknown metrics and
+dimensions are rejected by the catalogue (`VALIDATION_FAILED`), which is also the guard that stops the
+AI layer from requesting an arbitrary aggregate.
+
+### 19.4 AI API (`com.operonix.ai`)
+
+| Method | Path | Roles | Behaviour |
+| --- | --- | --- | --- |
+| GET | `/api/v1/ai/status` | all members | enabled, provider configured, quota used |
+| GET | `/api/v1/ai/usage` | office | quota + last 20 log entries |
+| PUT | `/api/v1/ai/settings` | owner, admin | toggle availability, set daily limit |
+| POST | `/api/v1/ai/ask` | office | question → validated intent → server metrics → narrative |
+| POST | `/api/v1/ai/quote-assist` | office | suggestions with cost, history, margin, rationale |
+| GET | `/api/v1/ai/insights` | office | warnings/positives derived by rules |
+
+Error and degradation behaviour:
+
+| Situation | Result |
+| --- | --- |
+| AI disabled for the workspace, or globally | `status=DISABLED`, built-in narrative, numbers still returned, no provider call |
+| No provider key | `status=DEGRADED`, `narrativeFromModel=false`; the UI labels it "built-in explanation" |
+| Daily quota reached | `status=QUOTA_EXCEEDED`; the request is logged, no provider call |
+| Provider timeout / non-2xx / bad JSON | `status=DEGRADED`; logged with the reason; the numbers are unaffected |
+| Metric unavailable (missing costs) | metric present with `available=false` and `reason`; never rendered as 0 |
+| Question outside the catalogue | `VALIDATION_FAILED` with the supported subjects listed |
+
+Security invariants: the provider payload contains metric labels, values, dates and currency only —
+no names, emails, addresses or invoice numbers. `AiProperties.apiKey` is never logged, never returned
+and never reaches the client bundle; the response exposes only `provider` and `model`. Before a model
+answer is used, `AiService.grounded()` checks that every number in the reply appears in the payload it
+was given; an ungrounded reply is discarded in favour of the deterministic summary.
+
+### 19.5 Frontend additions
+
+- `JobCostingPanel.tsx` inside the job drawer: work logs (start/stop), expenses, vendors, cost
+  breakdown, "cost not recorded" state, recompute action, planned vs actual profitability.
+- `pages/Analytics.tsx` (`/analytics`): range + location filters, KPI tiles with change vs previous
+  period, trend chart, breakdown table, ageing, job profitability table, refresh status, drill-down
+  links to invoices/jobs/customers.
+- `pages/Assistant.tsx` (`/assistant`): question box with examples, metric readings, breakdown table,
+  narrative provenance, insights list, quotation assistance, AI settings and usage.
+- `api/analytics.ts`, `api/ai.ts`; nav entries and route guards (`OFFICE` roles) added to
+  `App.tsx`/`Layout.tsx`; `nav.analytics` and `nav.assistant` are in the i18n catalogue.
+
+### 19.6 Tests added
+
+| Test | Covers |
+| --- | --- |
+| `costing.CostingFlowIT` (2) | work log → labour cost, expense materialisation, unknown-cost handling, cross-tenant 404, recompute idempotency |
+| `analytics.AnalyticsFlowIT` (2) | rollup refresh idempotency, overview reconciliation against invoices/payments, unavailable metrics, tenant isolation |
+| `ai.AiFlowIT` (2) | ask → server-computed figures, disabled/degraded path, quota exhaustion, quote assist, insights, audit logging |
+| `ai.AiGuardTest` (4) | intent parsing: whitelisted metrics only, relative ranges, unknown subject rejection, dimension extraction |
+
+`mvn test` → **66 tests, 0 failures** (JDK 21, embedded PostgreSQL 16).

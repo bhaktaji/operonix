@@ -6,10 +6,10 @@
 
 | Field | Value |
 | --- | --- |
-| Last updated | 2026-10-31 (session 6) |
-| Current phase | **Operonix 2.0 P0-1…P0-3 COMPLETE** — global/industry-neutral foundation shipped on top of the verified MVP |
-| Next phase | **STOPPED by instruction.** P1a (financial refactor, multi-currency, tax profiles) must not start until the owner approves |
-| Overall status | Working end-to-end locally: industry-neutral UI, country-derived onboarding, multi-workspace sign-in, refresh-token families, shared rate limiter |
+| Last updated | 2026-11-01 (session 7) |
+| Current phase | **P1b + P2a + P2b COMPLETE** — costing engine, business intelligence and Operonix AI implemented and verified on top of P1a |
+| Next phase | **P3 candidates** (payment capture, email/SMS delivery, customer portal, attachments). No cloud resource created; nothing deployed |
+| Overall status | Working end-to-end locally: lead-to-cash workflow, per-job costing, metric-catalogue analytics and an optional AI assistant. Backend 66 tests green on JDK 21; frontend `tsc -b && vite build` green |
 
 ---
 
@@ -116,10 +116,11 @@ committed and CI has never run. Creating the repository and pushing is step 1 of
 
 ## 5. Current task and next steps
 
-**Current task:** none in flight. **P0-1…P0-3 are implemented and verified; the session stopped there
-on instruction.** P1a (multi-currency money model, tax profiles, costing) is NOT started.
+**Current task:** none in flight. **P0, P1a, P1b, P2a and P2b are implemented and verified** — see
+§13 (P0), §14 (P1a) and §15 (P1b/P2a/P2b) for the exact state, verification tables and next steps.
 
-See §13 for the exact P0 state, the verification table and the next actionable steps.
+This section keeps the session-3 baseline (the pre-2.0 MVP) for historical reference only; treat §15
+as authoritative.
 
 **Verified in session 3 (commands + results):**
 
@@ -561,3 +562,102 @@ profile correctly overrides an explicit rate — the initial test expectation wa
 4. Then follow `IMPLEMENTATION_ROADMAP.md` §4 (P1b): `work_log`, `vendor`, `expense`, `job_cost`,
    `service_item.cost`, `job.actual_start/actual_end`, `recurring_series`. Costing must render
    **"cost not recorded"** rather than a 100% margin — that is P1b's acceptance criterion.
+
+## 15. Session 7 — P1b costing, P2a analytics, P2b AI (IMPLEMENTED, VERIFIED)
+
+### 15.1 Commit chain
+
+| Commit | Content |
+| --- | --- |
+| `f4a3f3b` | baseline before Operonix 2.0 |
+| `da397f9` | P0 — global foundation and identity hardening |
+| `1d873ef` | P1a — global financial foundation |
+| `1fbb22b` | P1b — costing engine (labour, vendors, expenses, job profitability) |
+| `cd60279` | P2a — analytics rollups, metric catalogue and drill-down |
+| `0f20984` | P2b — Operonix AI (assistant, insights, quotation assistance, quotas, audit) |
+| *(next commit)* | Documentation reconciliation — HLD §16, LLD §19, ERD §10, README rewrite, this section |
+
+### 15.2 P1b — costing engine
+
+- Migration `V4__costing_engine.sql`: `work_log`, `vendor`, `expense`, `job_cost`; `app_user.hourly_cost`,
+  `service_item.cost`, `job.actual_start`/`actual_end`.
+- `CostingService`/`CostingController`: vendors, work logs (start/stop), expenses (job-linked and
+  overhead), recompute, costing view, profitability view. `job_cost` is rebuilt (delete + insert),
+  never incremented, so a retried call cannot double-count.
+- Incomplete inputs are first-class: `hourly_cost = 0` or `service_item.cost = 0` yields
+  `costComplete = false` with reasons; profitability returns `available = false` rather than a 100%
+  margin. Direct job profit is labelled as excluding overheads.
+- Audit actions added: `WORK_LOG_*`, `EXPENSE_*`, `VENDOR_*`, `JOB_COST_RECOMPUTED`.
+- Frontend: `JobCostingPanel.tsx` in the job drawer (time logs, expenses, cost breakdown, recompute,
+  planned vs actual), catalogue cost field, team member hourly cost.
+
+### 15.3 P2a — business intelligence
+
+- Migration `V5__analytics.sql`: `metric_daily`, `analytics_refresh`, partial invoice index,
+  job delivery index.
+- `MetricDefinition` is the single catalogue (13 metrics with formula text and required inputs).
+  Rolled-up metrics live in `metric_daily` per tenant/day/location; profit, receivable, overdue, margin
+  and repeat-customer revenue are computed live so they cannot drift.
+- `AnalyticsService`/`AnalyticsQueryRepository`: overview with previous-period comparison and stated
+  reporting currency, trend buckets, breakdowns (customer/service/team/location), ageing, job
+  profitability, refresh status. Drill-down returns source ids for the UI.
+- `AnalyticsRefreshScheduler` (in-process) plus `AnalyticsJobRunner` for Cloud Run Jobs;
+  `OPERONIX_ANALYTICS_RUN_ON_STARTUP` / `..._EXIT_AFTER_RUN`.
+- Frontend: `pages/Analytics.tsx` at `/analytics` with range/location filters, KPI tiles, trend,
+  breakdown, ageing, job table and drill-down links.
+
+### 15.4 P2b — Operonix AI
+
+- Migration `V6__operonix_ai.sql`: `ai_settings`, `ai_usage` (PK tenant+day, quota enforced in the
+  incrementing statement), `ai_query_log`.
+- `AiIntent` deterministically parses a question into whitelisted metrics, a range and a dimension —
+  no text-to-SQL. `AiService` obtains figures from the analytics module, then asks `LlmProvider`
+  (Gemini adapter) only for wording; `AiService.grounded()` discards any reply containing a number
+  absent from the payload.
+- Quota and availability are checked before any provider call; every request is logged in
+  `ai_query_log`. With no key, status is `DEGRADED` and template narratives are served — the feature is
+  optional and nothing else depends on it.
+- `InsightService` (rules, not generation) flags overdue money, loss-making jobs, idling receivables and
+  their drill-down links. `QuoteAssistService` suggests lines/prices from catalogue cost and historical
+  accepted prices with rationale and assumptions; it never writes a quote.
+- Frontend: `pages/Assistant.tsx` at `/assistant` (ask box, metric readings, breakdown, narrative
+  provenance, insights, quotation assistance, AI settings and usage), `api/ai.ts`.
+
+### 15.5 Verification actually run (session 7)
+
+| Check | Result |
+| --- | --- |
+| `mvn test` (backend, JDK 21 from `C:\Tools`) | **66 tests, 0 failures** (was 60 after P2a; +2 `AiFlowIT`, +4 `AiGuardTest`) |
+| Flyway V1→V6 + `ddl-auto=validate` | applied on a clean database in every integration test |
+| `npm run typecheck` | clean |
+| `npm run build` (`tsc -b && vite build`) | green — 451.39 kB JS / 36.18 kB CSS |
+| AI API surface | `AiFlowIT` drives status/ask/quote-assist/insights/usage over HTTP against real PostgreSQL, including the disabled, degraded and quota-exhausted paths |
+| Cross-tenant isolation | asserted in `CostingFlowIT`, `AnalyticsFlowIT`, `AiFlowIT` |
+
+A real defect was found and fixed during this session: `RangeQuery` in `frontend/src/api/analytics.ts`
+lacked an index signature, so `npm run build` (`tsc -b`) failed on the P2a api client even though
+`npx tsc --noEmit` passed. The production build is the authoritative check.
+
+**Not verified:** no browser session (no local PostgreSQL/psql on this machine, so the app was not booted
+against a live dev database in session 7); the new pages were verified by type-check, production build
+and API-level integration tests only. Docker/GCP remain unbuilt/unapplied as before.
+
+### 15.6 Documentation reconciled
+
+- `docs/HLD.md` §16 — costing/analytics/AI architecture, ownership boundaries, deployment impact.
+- `docs/LLD.md` §19 — migrations, endpoint tables, business rules, degradation matrix, tests.
+- `docs/ERD.md` §10 — new tables, columns, constraints, indexes and Mermaid relationships.
+- `README.md` — investor-facing rewrite (positioning, problem, capabilities, BI/AI, architecture
+  diagram, stack, screens, quick start, deployment, security, roadmap with implemented vs planned).
+- `memory.md` — this section.
+
+### 15.7 Known limitations / next steps
+
+- No payment gateway, no email/SMS delivery, no attachments (Cloud Storage therefore unused).
+- One language catalogued; formatting is locale-aware but copy is English.
+- No automated browser/E2E suite; UI verified by build + API tests.
+- Analytics refresh is a single-writer job; multi-instance scheduling relies on Cloud Run Jobs (the
+  in-process scheduler is safe but not coordinated across replicas).
+- `exchange_rate` remains global per date (P1a design).
+- Next agent: P3 candidates are payment capture, notifications, customer portal, attachments, and a
+  Playwright smoke suite. Do not start them without owner approval.
