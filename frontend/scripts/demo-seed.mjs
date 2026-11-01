@@ -69,8 +69,11 @@ async function callWith(accessToken, method, path, body) {
 
 const ws = await call("PUT", "/workspace", {
   name: "Harbor Cleaning Co",
+  countryCode: "US",
   currency: "USD",
   timezone: "America/Los_Angeles",
+  locale: "en-US",
+  industryTemplate: "CLEANING",
 });
 console.log("workspace:", ws.name, ws.currency, ws.timezone);
 

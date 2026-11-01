@@ -77,6 +77,22 @@ public class AuthService {
 
     @Transactional
     public AuthResponse register(RegisterRequest request) {
+        // Registration is public: it *creates* a workspace, so the request has no tenant. A caller
+        // that still holds a session - a browser keeps its bearer token after sign-out elsewhere, and
+        // creating an additional workspace is a supported journey - must not have that session's
+        // tenant imposed on the new workspace's rows, which the TenantEntity guard would reject.
+        UUID previousTenant = TenantContext.currentOrNull();
+        TenantContext.clear();
+        try {
+            return provisionWorkspace(request);
+        } finally {
+            if (previousTenant != null) {
+                TenantContext.set(previousTenant);
+            }
+        }
+    }
+
+    private AuthResponse provisionWorkspace(RegisterRequest request) {
         String email = normaliseEmail(request.email());
         Tenant tenant = tenantService.provision(new TenantService.Provisioning(
                 request.orgName(),

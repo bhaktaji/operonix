@@ -21,6 +21,10 @@ function sameOriginProxy(target: string): ProxyOptions {
   };
 }
 
+// The API defaults to port 8080. Set VITE_API_PROXY_TARGET when Spring Boot runs on another port
+// (for example when 8080 is already taken on the developer's machine).
+const API_TARGET = process.env.VITE_API_PROXY_TARGET ?? "http://localhost:8080";
+
 export default defineConfig({
   plugins: [react()],
   resolve: {
@@ -29,8 +33,8 @@ export default defineConfig({
   server: {
     port: 5173,
     proxy: {
-      "/api": sameOriginProxy("http://localhost:8080"),
-      "/actuator": sameOriginProxy("http://localhost:8080"),
+      "/api": sameOriginProxy(API_TARGET),
+      "/actuator": sameOriginProxy(API_TARGET),
     },
   },
 });

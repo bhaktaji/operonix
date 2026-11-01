@@ -87,7 +87,10 @@ public abstract class AbstractIntegrationTest {
                         .content(mapper.writeValueAsString(body)))
                 .andExpect(status().isCreated())
                 .andReturn();
-        JsonNode json = body(result);
+        return session(body(result));
+    }
+
+    protected Session session(JsonNode json) {
         return new Session(json.get("accessToken").asText(), json.get("refreshToken").asText(),
                 UUID.fromString(json.get("user").get("id").asText()),
                 UUID.fromString(json.get("tenant").get("id").asText()));
@@ -99,10 +102,7 @@ public abstract class AbstractIntegrationTest {
                         .content(mapper.writeValueAsString(Map.of("email", email, "password", password))))
                 .andExpect(status().isOk())
                 .andReturn();
-        JsonNode json = body(result);
-        return new Session(json.get("accessToken").asText(), json.get("refreshToken").asText(),
-                UUID.fromString(json.get("user").get("id").asText()),
-                UUID.fromString(json.get("tenant").get("id").asText()));
+        return session(body(result));
     }
 
     protected JsonNode postJson(String path, Object body, Session session, int expectedStatus) throws Exception {

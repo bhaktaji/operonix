@@ -1,4 +1,6 @@
-const BASE = "http://localhost:8080/api/v1";
+// Override when the API is not on the default port, e.g.
+//   OPERONIX_BASE_URL=http://localhost:8090/api/v1 node scripts/smoke.mjs
+const BASE = process.env.OPERONIX_BASE_URL ?? "http://localhost:8080/api/v1";
 
 const stamp = Date.now();
 let token = "";
@@ -122,7 +124,9 @@ console.log("   audit events:", audit.content.map((e) => e.action).join(", "));
 const team = await call("GET", "/team");
 console.log("   team size:", team.length);
 
-// 11. tenant isolation: second workspace must not see the first customer
+// 11. tenant isolation: second workspace must not see the first customer.
+// A new client registers while signed out, so the previous session's token is dropped first.
+token = "";
 const other = await call("POST", "/auth/register", {
   orgName: `Other Co ${stamp}`,
   fullName: "Riley Other",

@@ -144,7 +144,7 @@ export function QuoteDetail() {
       </div>
 
       <div className="grid gap-4 xl:grid-cols-[1.6fr_1fr]">
-        <div className="space-y-4">
+        <div className="min-w-0 space-y-4">
           <Card className="p-5">
             <div className="grid gap-4 sm:grid-cols-2">
               <div>

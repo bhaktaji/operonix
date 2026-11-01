@@ -5,6 +5,9 @@ import com.operonix.support.AbstractIntegrationTest;
 import org.junit.jupiter.api.Test;
 import org.springframework.http.MediaType;
 
+import org.springframework.test.web.servlet.MvcResult;
+
+import java.util.HashMap;
 import java.util.Map;
 import java.util.UUID;
 
@@ -71,6 +74,32 @@ class AuthFlowIT extends AbstractIntegrationTest {
 
         JsonNode betaCustomers = getJson("/api/v1/customers", beta, 200);
         assertThat(betaCustomers.get("totalElements").asInt()).isZero();
+    }
+
+    @Test
+    void registeringAnotherWorkspaceWhileSignedInSucceedsAndStaysIsolated() throws Exception {
+        Session first = register("First Workspace", "owner@first.example");
+        UUID firstCustomer = createCustomer(first, "First Client");
+
+        // A client that is still holding its own session (the browser does) creates a second
+        // workspace. Registration carries no request tenant, so the tenant guard must not reject
+        // the new tenant's rows - and the new workspace must not inherit the old one's data.
+        Map<String, Object> body = new HashMap<>();
+        body.put("orgName", "Second Workspace");
+        body.put("fullName", "Test Owner");
+        body.put("email", "owner@second.example");
+        body.put("password", "CorrectHorse9Battery");
+        MvcResult result = mvc.perform(post("/api/v1/auth/register")
+                        .header("Authorization", "Bearer " + first.accessToken())
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(mapper.writeValueAsString(body)))
+                .andExpect(status().isCreated())
+                .andReturn();
+
+        Session second = session(body(result));
+        assertThat(second.tenantId()).isNotEqualTo(first.tenantId());
+        getJson("/api/v1/customers/" + firstCustomer, second, 404);
+        assertThat(getJson("/api/v1/customers", second, 200).get("totalElements").asInt()).isZero();
     }
 
     @Test

@@ -207,12 +207,22 @@ export function Skeleton({ className }: { className?: string }) {
   return <div className={cn("animate-pulse rounded-lg bg-sand-200/80", className)} />;
 }
 
-export function ErrorBanner({ title = "Something went wrong", message }: { title?: string; message: string }) {
+/**
+ * Error surface for loads and failed actions. A rejected form is not a system failure: when the
+ * message is a validation rejection the default title points at the fields instead, and the detail
+ * is shown once here while each field carries its own message.
+ */
+export function ErrorBanner({ title, message }: { title?: string; message: string }) {
+  const validation = /invalid|must not be blank|must be|is required/i.test(message);
+  const heading = title ?? (validation ? "Check the highlighted fields" : "Something went wrong");
   return (
-    <div className="flex items-start gap-3 rounded-lg border border-rose-100 bg-rose-50 px-4 py-3 text-sm text-rose-700">
+    <div
+      role="alert"
+      className="flex items-start gap-3 rounded-lg border border-rose-100 bg-rose-50 px-4 py-3 text-sm text-rose-700"
+    >
       <AlertCircle className="mt-0.5 h-4 w-4 shrink-0" />
       <div>
-        <p className="font-semibold">{title}</p>
+        <p className="font-semibold">{heading}</p>
         <p className="mt-0.5 text-rose-600">{message}</p>
       </div>
     </div>
