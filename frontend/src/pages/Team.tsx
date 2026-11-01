@@ -20,7 +20,12 @@ export function Team() {
   const [createOpen, setCreateOpen] = useState(false);
   const [editing, setEditing] = useState<TeamMember | null>(null);
   const [form, setForm] = useState({ fullName: "", email: "", password: "", role: "TECHNICIAN" as Role });
-  const [editForm, setEditForm] = useState({ fullName: "", role: "TECHNICIAN" as Role, active: true });
+  const [editForm, setEditForm] = useState({
+    fullName: "",
+    role: "TECHNICIAN" as Role,
+    active: true,
+    hourlyCost: "0.00",
+  });
   const [error, setError] = useState<string | null>(null);
 
   const team = useQuery({ queryKey: ["team"], queryFn: teamApi.list });
@@ -32,6 +37,7 @@ export function Team() {
       fullName: editing.fullName,
       role: editing.role === "OWNER" ? "ADMIN" : editing.role,
       active: editing.active,
+      hourlyCost: (editing.hourlyCost ?? 0).toFixed(2),
     });
   }, [editing]);
 
@@ -56,6 +62,7 @@ export function Team() {
       fullName: editForm.fullName.trim(),
       role: editing!.role === "OWNER" ? undefined : editForm.role,
       active: editForm.active,
+      hourlyCost: Number(editForm.hourlyCost) || 0,
     }),
     onSuccess: async () => {
       toast.push({ title: "Team member updated" });
@@ -261,6 +268,18 @@ export function Team() {
                 <option key={role} value={role}>{role.charAt(0) + role.slice(1).toLowerCase()}</option>
               ))}
             </Select>
+          </Field>
+          <Field
+            label="Hourly cost"
+            htmlFor="edit-cost"
+            hint="Used for labour costing. Leave at 0 and jobs this person works on report profit as unavailable rather than assuming free labour."
+          >
+            <Input
+              id="edit-cost"
+              inputMode="decimal"
+              value={editForm.hourlyCost}
+              onChange={(event) => setEditForm({ ...editForm, hourlyCost: event.target.value })}
+            />
           </Field>
           <label className="flex items-center gap-2.5 text-sm text-ink-700">
             <input

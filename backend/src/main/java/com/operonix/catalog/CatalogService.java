@@ -89,6 +89,8 @@ public class CatalogService {
             tax.require(currentUser.tenantId(), request.taxProfileId());
         }
         item.setTaxProfileId(request.taxProfileId());
+        // Planned cost drives quoted margin; absent means zero planned cost, never a hidden default.
+        item.setCost(request.cost() == null ? BigDecimal.ZERO.setScale(2) : request.cost().max(BigDecimal.ZERO));
         item.setActive(request.active());
     }
 }

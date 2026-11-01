@@ -119,10 +119,21 @@ public class TeamService {
                 sessionRevocation.revokeAll(target.getId(), clock.instant());
             }
         }
+        boolean costChanged = false;
+        if (request.hourlyCost() != null) {
+            java.math.BigDecimal cost = request.hourlyCost().max(java.math.BigDecimal.ZERO)
+                    .setScale(2, java.math.RoundingMode.HALF_UP);
+            costChanged = target.getHourlyCost() == null || cost.compareTo(target.getHourlyCost()) != 0;
+            target.setHourlyCost(cost);
+        }
         users.save(target);
 
         audit.record(activeChanged && !newActive ? AuditAction.USER_DEACTIVATED : AuditAction.USER_UPDATED,
                 "app_user", target.getId(), details(target, roleChanged, activeChanged));
+        if (costChanged) {
+            audit.record(AuditAction.STAFF_COST_UPDATED, "app_user", target.getId(),
+                    Map.of("hourlyCost", target.getHourlyCost().toPlainString()));
+        }
         users.flush();
         return TeamMemberResponse.from(target);
     }

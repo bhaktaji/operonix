@@ -14,6 +14,7 @@ import lombok.NoArgsConstructor;
 import lombok.Setter;
 import org.hibernate.annotations.UpdateTimestamp;
 
+import java.time.Duration;
 import java.time.Instant;
 import java.util.ArrayList;
 import java.util.List;
@@ -67,6 +68,13 @@ public class Job extends TenantEntity {
     @Column(name = "completed_at")
     private Instant completedAt;
 
+    /** Earliest work-log start. Derived, so a job reports its real start rather than its plan. */
+    @Column(name = "actual_start")
+    private Instant actualStart;
+
+    @Column(name = "actual_end")
+    private Instant actualEnd;
+
     @OneToMany(mappedBy = "job", cascade = CascadeType.ALL, orphanRemoval = true)
     private List<JobAssignment> assignments = new ArrayList<>();
 
@@ -87,4 +95,13 @@ public class Job extends TenantEntity {
     public void removeAssignment(JobAssignment assignment) {
         assignments.remove(assignment);
     }
+
+    /** Derive duration in minutes from actual_start/actual_end when work logs are absent. */
+    public Integer computeDurationMinutes() {
+        if (actualStart != null && actualEnd != null) {
+            return (int) Duration.between(actualStart, actualEnd).toMinutes();
+        }
+        return null;
+    }
+
 }

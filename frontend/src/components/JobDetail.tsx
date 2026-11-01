@@ -10,6 +10,7 @@ import { Avatar, Badge, Button, ErrorBanner, Field, Select, Textarea } from "@/c
 import { Modal } from "@/components/ui/Modal";
 import { useToast } from "@/components/ui/toast";
 import { statusTone } from "@/components/ui/cn";
+import { JobCostingPanel } from "@/components/JobCostingPanel";
 import { formatDate, formatTime, labelize } from "@/lib/format";
 
 export function JobDetail({
@@ -256,6 +257,8 @@ export function JobDetail({
             </div>
           )}
         </div>
+
+        <JobCostingPanel jobId={job.id} canManage={canManage} />
 
         {job.notes && (
           <div>

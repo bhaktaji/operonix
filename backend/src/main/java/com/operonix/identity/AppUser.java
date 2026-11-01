@@ -12,6 +12,7 @@ import lombok.NoArgsConstructor;
 import lombok.Setter;
 import org.hibernate.annotations.UpdateTimestamp;
 
+import java.math.BigDecimal;
 import java.time.Instant;
 
 @Entity
@@ -39,6 +40,10 @@ public class AppUser extends TenantEntity {
 
     @Column(name = "last_login_at")
     private Instant lastLoginAt;
+
+    /** Optional hourly cost rate for this user (e.g. technician rate per hour). */
+    @Column(name = "hourly_cost", precision = 12, scale = 2, nullable = false, columnDefinition = "numeric default 0")
+    private BigDecimal hourlyCost = BigDecimal.ZERO;
 
     @UpdateTimestamp
     @Column(name = "updated_at", nullable = false)

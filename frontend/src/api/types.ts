@@ -137,6 +137,7 @@ export interface ServiceItem {
   durationMinutes: number;
   taxRate: number;
   taxProfileId?: string | null;
+  cost: number;
   active: boolean;
   version: number;
   createdAt: string;
@@ -328,6 +329,8 @@ export interface TeamMember {
   fullName: string;
   role: Role;
   active: boolean;
+  /** Labour cost per hour in the workspace currency; 0 means not configured. */
+  hourlyCost?: number | null;
   lastLoginAt?: string | null;
   createdAt: string;
 }
@@ -369,6 +372,131 @@ export interface RegisterInput {
   locale?: string;
   industryTemplate?: string;
   legalName?: string;
+}
+
+// ------------------------------------------------------------------ costing (P1b)
+
+export type ExpenseCategory = "LABOR" | "MATERIAL" | "EQUIPMENT" | "SUBCONTRACTOR" | "OTHER";
+
+export interface Vendor {
+  id: string;
+  name: string;
+  contactName?: string | null;
+  email?: string | null;
+  phone?: string | null;
+  taxNumber?: string | null;
+  defaultRate: number;
+  paymentTerms: string;
+  active: boolean;
+  version: number;
+}
+
+export interface VendorInput {
+  name: string;
+  contactName?: string | null;
+  email?: string | null;
+  phone?: string | null;
+  taxNumber?: string | null;
+  defaultRate?: number;
+  paymentTerms?: string;
+  active?: boolean;
+}
+
+export interface WorkLog {
+  id: string;
+  jobId: string;
+  userId: string;
+  userName: string;
+  startAt: string;
+  endAt?: string | null;
+  minutes?: number | null;
+  manual: boolean;
+  notes?: string | null;
+  /** Absent when the person has no hourly cost configured. */
+  cost?: number | null;
+  version: number;
+}
+
+export interface WorkLogInput {
+  userId?: string;
+  startAt: string;
+  endAt?: string | null;
+  notes?: string;
+}
+
+export interface Expense {
+  id: string;
+  jobId?: string | null;
+  jobNumber?: string | null;
+  vendorId?: string | null;
+  vendorName?: string | null;
+  description: string;
+  amount: number;
+  currency: string;
+  fxRate: number;
+  workspaceAmount: number;
+  receiptReference?: string | null;
+  expenseDate: string;
+  category: ExpenseCategory;
+  notes?: string | null;
+  version: number;
+}
+
+export interface ExpenseInput {
+  description: string;
+  amount: number;
+  currency?: string;
+  expenseDate: string;
+  category: ExpenseCategory;
+  vendorId?: string | null;
+  jobId?: string | null;
+  receiptReference?: string | null;
+  notes?: string | null;
+}
+
+export interface JobCost {
+  jobId: string;
+  currency: string;
+  laborCost: number;
+  materialCost: number;
+  equipmentCost: number;
+  subcontractorCost: number;
+  otherCost: number;
+  totalCost: number;
+  computedAt?: string | null;
+  version: number;
+}
+
+/** Amounts are absent (not zero) when the job's profitability is INCOMPLETE. */
+export interface Profitability {
+  jobId: string;
+  currency: string;
+  status: "COMPLETE" | "INCOMPLETE";
+  reasons: string[];
+  revenue?: number | null;
+  laborCost: number;
+  materialCost: number;
+  equipmentCost: number;
+  subcontractorCost: number;
+  otherCost: number;
+  totalCost: number;
+  directProfit?: number | null;
+  marginPercent?: number | null;
+  plannedRevenue?: number | null;
+  plannedCost?: number | null;
+  plannedMargin?: number | null;
+  actualMinutes?: number | null;
+  scheduledMinutes?: number | null;
+  computedAt?: string | null;
+  scopeNote: string;
+}
+
+export interface JobCostingView {
+  cost: JobCost;
+  profitability: Profitability;
+  workLogs: WorkLog[];
+  expenses: Expense[];
+  vendors: Vendor[];
 }
 
 export interface AuditEvent {

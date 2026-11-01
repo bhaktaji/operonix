@@ -47,6 +47,10 @@ public class ServiceItem extends TenantEntity {
     @Column(name = "tax_profile_id")
     private UUID taxProfileId;
 
+    /** Planned cost for this service item; used for margin calculations in quotes. */
+    @Column(name = "cost", precision = 12, scale = 2, nullable = false, columnDefinition = "numeric default 0")
+    private BigDecimal cost = BigDecimal.ZERO;
+
     @Column(name = "active", nullable = false)
     private boolean active = true;
 

@@ -20,6 +20,7 @@ const emptyForm = {
   durationMinutes: "120",
   taxRate: "0.00",
   taxProfileId: "",
+  cost: "0.00",
   active: true,
 };
 
@@ -50,6 +51,7 @@ export function Catalog() {
         durationMinutes: String(editing.durationMinutes),
         taxRate: (editing.taxRate * 100).toFixed(2),
         taxProfileId: editing.taxProfileId ?? "",
+        cost: (editing.cost ?? 0).toFixed(2),
         active: editing.active,
       });
     } else {
@@ -79,6 +81,7 @@ export function Catalog() {
       durationMinutes: Number(form.durationMinutes) || 120,
       taxRate: (Number(form.taxRate) || 0) / 100,
       taxProfileId: form.taxProfileId || null,
+      cost: Number(form.cost) || 0,
       active: form.active,
     });
   };
@@ -228,6 +231,14 @@ export function Catalog() {
                 inputMode="decimal"
                 value={form.basePrice}
                 onChange={(event) => setForm({ ...form, basePrice: event.target.value })}
+              />
+            </Field>
+            <Field label="Planned cost" htmlFor="svc-cost" hint="What it costs you to deliver this item. Drives quoted margin.">
+              <Input
+                id="svc-cost"
+                inputMode="decimal"
+                value={form.cost}
+                onChange={(event) => setForm({ ...form, cost: event.target.value })}
               />
             </Field>
             <Field label="Default duration (minutes)" htmlFor="svc-duration">

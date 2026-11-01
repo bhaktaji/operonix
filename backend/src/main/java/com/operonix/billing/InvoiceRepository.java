@@ -29,6 +29,8 @@ public interface InvoiceRepository extends JpaRepository<Invoice, UUID>,
     Optional<Invoice> findActiveByJobId(@Param("jobId") UUID jobId, @Param("tenantId") UUID tenantId,
                                         @Param("voidStatus") InvoiceStatus voidStatus);
 
+    List<Invoice> findByTenantIdAndJobId(UUID tenantId, UUID jobId);
+
     long countByTenantIdAndStatusIn(UUID tenantId, Collection<InvoiceStatus> statuses);
 
     @Query("""

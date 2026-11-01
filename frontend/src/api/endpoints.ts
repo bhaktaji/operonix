@@ -1,6 +1,14 @@
 import { qs, request } from "./client";
 import type {
   AuditEvent,
+  Expense,
+  ExpenseInput,
+  JobCostingView,
+  Profitability,
+  Vendor,
+  VendorInput,
+  WorkLog,
+  WorkLogInput,
   AuthResponse,
   Customer,
   CustomerSummary,
@@ -65,7 +73,7 @@ export const teamApi = {
   assignable: () => request<Technician[]>("/team/assignable"),
   create: (input: { fullName: string; email: string; password: string; role: Role }) =>
     request<TeamMember>("/team", { method: "POST", body: JSON.stringify(input) }),
-  update: (id: string, input: { fullName?: string; role?: Role; active?: boolean }) =>
+  update: (id: string, input: { fullName?: string; role?: Role; active?: boolean; hourlyCost?: number }) =>
     request<TeamMember>(`/team/${id}`, { method: "PUT", body: JSON.stringify(input) }),
 };
 
@@ -131,6 +139,8 @@ export interface ServiceInput {
   durationMinutes: number;
   taxRate: number;
   taxProfileId?: string | null;
+  /** Planned cost of delivery, used for quoted margin. */
+  cost?: number;
   active: boolean;
 }
 
@@ -246,6 +256,38 @@ export const reportsApi = {
     request<RevenueReport>(`/reports/revenue${qs(params)}`),
   technicians: (params: { from: string; to: string }) =>
     request<import("./types").TechnicianPerformance[]>(`/reports/technicians${qs(params)}`),
+};
+
+// ---------------------------------------------------------------- costing
+
+export const costingApi = {
+  job: (jobId: string) => request<JobCostingView>(`/jobs/${jobId}/costing`),
+  profitability: (jobId: string) => request<Profitability>(`/jobs/${jobId}/profitability`),
+  recompute: (jobId: string) =>
+    request<JobCostingView["cost"]>(`/jobs/${jobId}/costs/recompute`, { method: "POST" }),
+
+  workLogs: (jobId: string) => request<WorkLog[]>(`/jobs/${jobId}/work-logs`),
+  addWorkLog: (jobId: string, input: WorkLogInput) =>
+    request<WorkLog>(`/jobs/${jobId}/work-logs`, { method: "POST", body: JSON.stringify(input) }),
+  stopWorkLog: (workLogId: string, endAt?: string) =>
+    request<WorkLog>(`/work-logs/${workLogId}/stop`, {
+      method: "POST",
+      body: JSON.stringify(endAt ? { endAt } : {}),
+    }),
+  deleteWorkLog: (workLogId: string) =>
+    request<void>(`/work-logs/${workLogId}`, { method: "DELETE" }),
+
+  expenses: (jobId: string) => request<Expense[]>(`/jobs/${jobId}/expenses`),
+  addExpense: (jobId: string, input: ExpenseInput) =>
+    request<Expense>(`/jobs/${jobId}/expenses`, { method: "POST", body: JSON.stringify(input) }),
+  deleteExpense: (expenseId: string) =>
+    request<void>(`/expenses/${expenseId}`, { method: "DELETE" }),
+
+  vendors: (activeOnly = false) => request<Vendor[]>(`/vendors${qs({ activeOnly })}`),
+  createVendor: (input: VendorInput) =>
+    request<Vendor>("/vendors", { method: "POST", body: JSON.stringify(input) }),
+  updateVendor: (id: string, input: VendorInput) =>
+    request<Vendor>(`/vendors/${id}`, { method: "PUT", body: JSON.stringify(input) }),
 };
 
 // ----------------------------------------------------------------- audit
