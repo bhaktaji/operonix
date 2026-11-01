@@ -13,6 +13,7 @@ import { Schedule } from "@/pages/Schedule";
 import { Invoices } from "@/pages/Invoices";
 import { InvoiceDetail } from "@/pages/InvoiceDetail";
 import { Catalog } from "@/pages/Catalog";
+import { Analytics } from "@/pages/Analytics";
 import { Team } from "@/pages/Team";
 import { Settings } from "@/pages/Settings";
 import { FinanceSettings } from "@/pages/FinanceSettings";
@@ -44,6 +45,8 @@ export function App() {
 
           <Route path="invoices" element={<RoleGate allow={OFFICE}><Invoices /></RoleGate>} />
           <Route path="invoices/:invoiceId" element={<RoleGate allow={OFFICE}><InvoiceDetail /></RoleGate>} />
+
+          <Route path="analytics" element={<RoleGate allow={OFFICE}><Analytics /></RoleGate>} />
 
           <Route path="catalog" element={<Catalog />} />
           <Route path="team" element={<RoleGate allow={ADMIN}><Team /></RoleGate>} />

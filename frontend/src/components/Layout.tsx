@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from "react";
 import { NavLink, Outlet, useNavigate } from "react-router-dom";
 import {
+  BarChart3,
   CalendarDays,
   ChevronDown,
   FileText,
@@ -53,6 +54,7 @@ const NAV_GROUPS: NavGroup[] = [
       { to: "/quotes", labelKey: "nav.quotes", icon: FileText, roles: OFFICE },
       { to: "/schedule", labelKey: "nav.schedule", icon: CalendarDays },
       { to: "/invoices", labelKey: "nav.invoices", icon: Receipt, roles: OFFICE },
+      { to: "/analytics", labelKey: "nav.analytics", icon: BarChart3, roles: OFFICE },
     ],
   },
   {

@@ -19,6 +19,8 @@ export const en = {
   "nav.quotes": "Quotations",
   "nav.schedule": "Scheduling",
   "nav.invoices": "Invoices",
+  "nav.analytics": "Analytics",
+  "nav.assistant": "Operonix AI",
   "nav.payments": "Payments",
   "nav.catalog": "Catalog",
   "nav.team": "Team",
