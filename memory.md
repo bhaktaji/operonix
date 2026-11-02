@@ -86,8 +86,10 @@ operonix/
 Module boundaries: HLD §4.1. Each module owns its tables; services call other modules' services,
 never their repositories (reporting is the read-only exception).
 
-**No `.git` directory exists in this workspace.** Git metadata is unavailable, so nothing has been
-committed and CI has never run. Creating the repository and pushing is step 1 of the next session.
+**Git:** `origin` = `https://github.com/bhaktaji/operonix.git`, branch `master`. Session 9 ends at commit
+`a7e2295` (P3 hardening) with a clean tree; earlier history is `e8b216e` … `f4a3f3b`. GitHub Actions has
+still never run (the workflows exist but no run has been observed). `origin/master` is `e8b216e`, so the
+P3 hardening commit `a7e2295` is local-only (ahead 1); pushing was not requested.
 
 ---
 
