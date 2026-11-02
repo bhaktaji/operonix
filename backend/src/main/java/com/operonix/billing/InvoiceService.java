@@ -249,6 +249,16 @@ public class InvoiceService {
     @Transactional
     public InvoiceDtos.PaymentResponse addPayment(UUID invoiceId, InvoiceDtos.PaymentRequest request) {
         Invoice invoice = require(invoiceId);
+        // A retried request must not take the money twice: the key the client sent identifies the
+        // attempt, so a replay answers with the payment that attempt already created. The database
+        // unique index on (tenant_id, idempotency_key) is the backstop for a simultaneous duplicate.
+        String idempotencyKey = trimToNull(request.idempotencyKey());
+        if (idempotencyKey != null) {
+            var replayed = payments.findFirstByTenantIdAndIdempotencyKey(invoice.getTenantId(), idempotencyKey);
+            if (replayed.isPresent()) {
+                return InvoiceDtos.PaymentResponse.from(replayed.get());
+            }
+        }
         if (invoice.getStatus() == InvoiceStatus.VOID) {
             throw ApiException.immutable("a void invoice cannot receive payments");
         }
@@ -271,6 +281,7 @@ public class InvoiceService {
         payment.setReference(trimToNull(request.reference()));
         payment.setPaidAt(paidAt);
         payment.setRecordedBy(currentUser.id());
+        payment.setIdempotencyKey(idempotencyKey);
         invoice.addPayment(payment);
         invoice.setAmountPaid(MoneyCalculator.money(invoice.getAmountPaid().add(amount)));
         int baseScale = finance.precision(invoice.getBaseCurrency());

@@ -17,12 +17,20 @@ public final class JobDtos {
     private JobDtos() {
     }
 
+    /**
+     * A window can be sent either as UTC instants ({@code scheduledStart}/{@code scheduledEnd}) or as
+     * wall-clock values ({@code startLocal}/{@code endLocal}), which the server resolves in the
+     * location's time zone. The local form is what the UI sends, so a device in another zone cannot
+     * shift the appointment.
+     */
     public record ScheduleRequest(
             @NotNull UUID customerId,
             @NotNull UUID locationId,
             @Size(max = 160) String title,
-            @NotNull Instant scheduledStart,
-            @NotNull Instant scheduledEnd,
+            Instant scheduledStart,
+            Instant scheduledEnd,
+            @Size(max = 40) String startLocal,
+            @Size(max = 40) String endLocal,
             List<UUID> technicianIds,
             @Size(max = 2000) String notes
     ) {
@@ -32,8 +40,10 @@ public final class JobDtos {
             @NotNull UUID customerId,
             @NotNull UUID locationId,
             @Size(max = 160) String title,
-            @NotNull Instant scheduledStart,
-            @NotNull Instant scheduledEnd,
+            Instant scheduledStart,
+            Instant scheduledEnd,
+            @Size(max = 40) String startLocal,
+            @Size(max = 40) String endLocal,
             List<UUID> technicianIds,
             @Size(max = 2000) String notes,
             @NotBlank String recurrence,
@@ -52,6 +62,10 @@ public final class JobDtos {
 
     public record Conflict(UUID userId, String fullName, UUID jobId, String number,
                            Instant scheduledStart, Instant scheduledEnd) {
+    }
+
+    /** A resolved window: the instants that get stored, plus the zone they were read in. */
+    public record Window(Instant start, Instant end, java.time.ZoneId zone) {
     }
 
     public record Response(UUID id, String number, String title, String status,

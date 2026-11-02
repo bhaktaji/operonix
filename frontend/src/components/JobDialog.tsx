@@ -6,17 +6,29 @@ import { errorMessage } from "@/api/client";
 import { Button, ErrorBanner, Field, Input, Select, Textarea } from "@/components/ui/primitives";
 import { Modal } from "@/components/ui/Modal";
 import { useToast } from "@/components/ui/toast";
-import { addMinutes, fromDateTimeLocal, toDateTimeLocal } from "@/lib/format";
+import {
+  addMinutesToLocal,
+  toZonedLocalValue,
+  zonedDefaultWindow,
+} from "@/lib/format";
+import { useAuth } from "@/auth/AuthProvider";
 
-function defaultStart(dateISO?: string) {
+/**
+ * The dialog shows and submits wall-clock times in the location's zone, so a user in another zone
+ * books the crew's morning instead of their own.
+ */
+function defaultStart(zone: string | undefined, dateISO?: string) {
   if (dateISO) {
-    const start = new Date(`${dateISO}T09:00:00`);
-    return toDateTimeLocal(start);
+    return `${dateISO}T09:00`;
   }
-  const start = new Date();
-  start.setDate(start.getDate() + 1);
-  start.setHours(9, 0, 0, 0);
-  return toDateTimeLocal(start);
+  return zonedDefaultWindow(zone).start;
+}
+
+function defaultEnd(zone: string | undefined, dateISO?: string) {
+  if (dateISO) {
+    return addMinutesToLocal(`${dateISO}T09:00`, 120);
+  }
+  return zonedDefaultWindow(zone).end;
 }
 
 export function JobDialog({
@@ -34,13 +46,15 @@ export function JobDialog({
 }) {
   const queryClient = useQueryClient();
   const toast = useToast();
+  const { tenant } = useAuth();
   const isEdit = !!job;
+  const defaultZone = tenant?.timezone;
 
   const [customerId, setCustomerId] = useState("");
   const [locationId, setLocationId] = useState("");
   const [title, setTitle] = useState("");
-  const [start, setStart] = useState(defaultStart(defaultDate));
-  const [end, setEnd] = useState(toDateTimeLocal(addMinutes(fromDateTimeLocal(defaultStart(defaultDate)), 120)));
+  const [start, setStart] = useState(defaultStart(defaultZone, defaultDate));
+  const [end, setEnd] = useState(defaultEnd(defaultZone, defaultDate));
   const [technicianIds, setTechnicianIds] = useState<string[]>([]);
   const [notes, setNotes] = useState("");
   const [recurrence, setRecurrence] = useState("NONE");
@@ -66,25 +80,25 @@ export function JobDialog({
       setCustomerId(job.customer?.id ?? "");
       setLocationId(job.location?.id ?? "");
       setTitle(job.title);
-      setStart(toDateTimeLocal(job.scheduledStart));
-      setEnd(toDateTimeLocal(job.scheduledEnd));
+      const jobZone = job.location?.timezone ?? defaultZone;
+      setStart(toZonedLocalValue(job.scheduledStart, jobZone));
+      setEnd(toZonedLocalValue(job.scheduledEnd, jobZone));
       setTechnicianIds(job.technicians.map((tech) => tech.id));
       setNotes(job.notes ?? "");
       setRecurrence("NONE");
       setOccurrences("4");
     } else {
-      const initialStart = defaultStart(defaultDate);
       setCustomerId("");
       setLocationId("");
       setTitle("");
-      setStart(initialStart);
-      setEnd(toDateTimeLocal(addMinutes(fromDateTimeLocal(initialStart), 120)));
+      setStart(defaultStart(defaultZone, defaultDate));
+      setEnd(defaultEnd(defaultZone, defaultDate));
       setTechnicianIds([]);
       setNotes("");
       setRecurrence("NONE");
       setOccurrences("4");
     }
-  }, [open, job, defaultDate]);
+  }, [open, job, defaultDate, defaultZone]);
 
   useEffect(() => {
     if (!locationId && locations.data && locations.data.length > 0) {
@@ -98,8 +112,8 @@ export function JobDialog({
         customerId,
         locationId,
         title: title.trim() || undefined,
-        scheduledStart: fromDateTimeLocal(start),
-        scheduledEnd: fromDateTimeLocal(end),
+        startLocal: start,
+        endLocal: end,
         technicianIds,
         notes: notes.trim() || undefined,
       };
@@ -140,7 +154,8 @@ export function JobDialog({
     setError(null);
     if (!customerId) return setError("Choose a customer.");
     if (!locationId) return setError("Choose a service location for this customer.");
-    if (new Date(end) <= new Date(start)) return setError("The job must end after it starts.");
+    // Wall-clock strings compare correctly as ISO text within one zone.
+    if (end <= start) return setError("The job must end after it starts.");
     mutation.mutate();
   };
 
@@ -217,7 +232,7 @@ export function JobDialog({
               onChange={(event) => {
                 setStart(event.target.value);
                 if (event.target.value) {
-                  setEnd(toDateTimeLocal(addMinutes(fromDateTimeLocal(event.target.value), 120)));
+                  setEnd(addMinutesToLocal(event.target.value, 120));
                 }
               }}
             />

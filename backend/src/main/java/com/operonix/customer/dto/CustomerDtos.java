@@ -43,6 +43,7 @@ public final class CustomerDtos {
             @NotBlank @Size(max = 16) String postalCode,
             @NotBlank @Pattern(regexp = "[A-Za-z]{2}", message = "must be a two-letter country code") String country,
             @Size(max = 1000) String accessNotes,
+            @Size(max = 64) String timezone,
             boolean isPrimary
     ) {
     }
@@ -69,12 +70,13 @@ public final class CustomerDtos {
     }
 
     public record LocationResponse(UUID id, String label, String line1, String line2, String city, String region,
-                                   String postalCode, String country, String accessNotes, boolean isPrimary) {
+                                   String postalCode, String country, String accessNotes, String timezone,
+                                   boolean isPrimary) {
 
         public static LocationResponse from(ServiceLocation location) {
             return new LocationResponse(location.getId(), location.getLabel(), location.getLine1(),
                     location.getLine2(), location.getCity(), location.getRegion(), location.getPostalCode(),
-                    location.getCountry(), location.getAccessNotes(), location.isPrimary());
+                    location.getCountry(), location.getAccessNotes(), location.getTimezone(), location.isPrimary());
         }
     }
 

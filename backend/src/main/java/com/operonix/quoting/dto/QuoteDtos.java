@@ -57,8 +57,10 @@ public final class QuoteDtos {
     }
 
     public record ConvertRequest(
-            @NotNull Instant scheduledStart,
-            @NotNull Instant scheduledEnd,
+            Instant scheduledStart,
+            Instant scheduledEnd,
+            @Size(max = 40) String startLocal,
+            @Size(max = 40) String endLocal,
             @NotEmpty List<UUID> technicianIds,
             @Size(max = 160) String title
     ) {

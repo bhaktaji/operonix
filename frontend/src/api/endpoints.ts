@@ -105,6 +105,8 @@ export interface LocationInput {
   postalCode: string;
   country: string;
   accessNotes?: string;
+  /** IANA zone such as America/Los_Angeles; blank means "same as the workspace". */
+  timezone?: string;
   isPrimary: boolean;
 }
 
@@ -168,8 +170,8 @@ export const quotesApi = {
   accept: (id: string) => request<Quote>(`/quotes/${id}/accept`, { method: "POST" }),
   decline: (id: string) => request<Quote>(`/quotes/${id}/decline`, { method: "POST" }),
   convert: (id: string, input: {
-    scheduledStart: string;
-    scheduledEnd: string;
+    startLocal: string;
+    endLocal: string;
     technicianIds: string[];
     title?: string;
   }) => request<Job>(`/quotes/${id}/convert`, { method: "POST", body: JSON.stringify(input) }),
@@ -240,6 +242,8 @@ export const invoicesApi = {
     method: string;
     reference?: string;
     paidAt?: string;
+    /** Repeating this key with the same payment returns the original instead of recording twice. */
+    idempotencyKey?: string;
   }) => request<Payment>(`/invoices/${id}/payments`, {
     method: "POST",
     body: JSON.stringify(input),

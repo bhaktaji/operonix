@@ -54,9 +54,11 @@ public final class MetricDefinition {
 
     private static final List<Metric> ALL = List.of(
             new Metric(REVENUE, "Revenue", Unit.CURRENCY,
-                    "Sum of issued invoice totals, excluding void invoices, converted to the"
-                            + " workspace currency at the rate frozen on each invoice.",
-                    List.of("invoice.total", "invoice.base_total", "invoice.issue_date"), true),
+                    "Sum of issued invoice totals net of tax, excluding void invoices, converted to the"
+                            + " workspace currency at the rate frozen on each invoice. Tax collected is"
+                            + " excluded because it is owed to a tax authority, not earned.",
+                    List.of("invoice.total", "invoice.tax_amount", "invoice.base_total", "invoice.issue_date"),
+                    true),
             new Metric(PAYMENTS_COLLECTED, "Payments collected", Unit.CURRENCY,
                     "Sum of payments received in the period. A reversed payment is removed, so the"
                             + " figure always matches the payment ledger.",

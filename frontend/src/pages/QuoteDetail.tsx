@@ -186,7 +186,7 @@ export function QuoteDetail() {
                     <th className="table-head text-right">Qty</th>
                     <th className="table-head text-right">Unit price</th>
                     <th className="table-head text-right">Tax</th>
-                    <th className="table-head text-right">Total</th>
+                    <th className="table-head text-right">Amount</th>
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-sand-100">
@@ -196,8 +196,9 @@ export function QuoteDetail() {
                       <td className="table-cell text-right">{Number(line.quantity)}</td>
                       <td className="table-cell text-right">{formatMoney(line.unitPrice, data.currency)}</td>
                       <td className="table-cell text-right">{formatPercent(line.taxRate)}</td>
+                      {/* Net of tax, so the lines add up to the subtotal the summary shows. */}
                       <td className="table-cell text-right font-medium text-ink-900">
-                        {formatMoney(line.lineTotal, data.currency)}
+                        {formatMoney(line.lineSubtotal, data.currency)}
                       </td>
                     </tr>
                   ))}

@@ -82,6 +82,22 @@ public abstract class AbstractIntegrationTest {
         body.put("fullName", "Test Owner");
         body.put("email", email);
         body.put("password", "CorrectHorse9Battery");
+        return registerWith(body);
+    }
+
+    /** Registers a workspace whose own clock is somewhere specific, e.g. {@code Asia/Kolkata}. */
+    protected Session register(String orgName, String email, String timezone) throws Exception {
+        Map<String, Object> body = new HashMap<>();
+        body.put("orgName", orgName);
+        body.put("fullName", "Test Owner");
+        body.put("email", email);
+        body.put("password", "CorrectHorse9Battery");
+        body.put("countryCode", "IN");
+        body.put("timezone", timezone);
+        return registerWith(body);
+    }
+
+    private Session registerWith(Map<String, Object> body) throws Exception {
         MvcResult result = mvc.perform(post("/api/v1/auth/register")
                         .contentType(MediaType.APPLICATION_JSON)
                         .content(mapper.writeValueAsString(body)))

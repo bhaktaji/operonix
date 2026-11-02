@@ -6,10 +6,10 @@
 
 | Field | Value |
 | --- | --- |
-| Last updated | 2026-11-01 (session 8) |
-| Current phase | **P2c + P2d COMPLETE** — end-to-end acceptance on real PostgreSQL 16 and a browser session, plus the security/reliability findings that pass surfaced |
-| Next phase | **P3 candidates** (payment capture, email/SMS delivery, customer portal, attachments, Playwright suite). No cloud resource created; nothing deployed |
-| Overall status | Working end-to-end locally against PostgreSQL 16 (Flyway V1–V7): lead-to-cash, per-job costing, analytics, AI assistant. Backend 68 tests green on JDK 21; frontend `tsc -b && vite build` green. `master` = `8764258` + this session's fixes |
+| Last updated | 2026-11-02 (session 9) |
+| Current phase | **P3 hardening COMPLETE** — location time zones, idempotent payments, tax-exclusive revenue, write-aware analytics freshness (V8), plus the UI fixes they exposed |
+| Next phase | Remaining **P3 candidates** (payment capture, email/SMS delivery, customer portal, attachments, Playwright suite). No cloud resource created; nothing deployed |
+| Overall status | Working end-to-end locally against PostgreSQL 16 (Flyway V1–V8): lead-to-cash, per-job costing, analytics, AI assistant. Backend **81 tests green** on JDK 21; frontend `tsc -b && vite build` green. `master` = `e8b216e` + this session's commit |
 
 ---
 
@@ -738,3 +738,94 @@ Reversal and analytics-concurrency defects (`8764258`) and the register-with-act
 5. Demo workspace: `owner+026023@harborclean.example` / `Harbor-Clean-2026` (technician
    `marisol+026023@harborclean.example` / `Fieldwork9Clean`). These exist only in the local database.
 6. P3 has not been started; nothing is deployed and no cloud resource exists.
+
+---
+
+## 17. Session 9 — P3 hardening: time zones, payment retries, honest revenue (IMPLEMENTED, VERIFIED)
+
+### 17.1 Scope
+
+Closes four risks accepted in §16.4 — device-zone scheduling, missing payment idempotency, revenue that
+included collected tax, and analytics rollups that could stay stale after a write — with an additive
+migration and no cloud or product-scope change. Payment capture, email/SMS delivery, the customer portal,
+attachments and a Playwright suite are **still not started**.
+
+### 17.2 Migration and behaviour (V8)
+
+`V8__scheduling_timezone_and_payment_idempotency.sql`: `service_location.timezone` (nullable, CHECK 3–64
+chars), `payment.idempotency_key` (nullable) and the partial unique index
+`uq_payment_idempotency (tenant_id, idempotency_key) WHERE idempotency_key IS NOT NULL`. Additive only: a
+V7 database upgrades with every row untouched (no zone → workspace zone; no key → previous behaviour).
+
+| Change | Contract |
+| --- | --- |
+| Scheduling | A window is resolved in `service_location.timezone`, falling back to `tenant.timezone`; the device zone never participates. `startLocal`/`endLocal` wall-clock values (`2026-11-02T09:00`, no offset) or `scheduledStart`/`scheduledEnd` instants are accepted, never both; offsets in a local value are rejected. Applies to create, series, update and quote conversion. Series repeat local wall-clock time; a DST gap moves forward, an ambiguous hour takes the earlier offset. |
+| Payments | `POST /invoices/{id}/payments` accepts `idempotencyKey`; replaying it returns the original payment (`201`) with no second row, scoped per workspace. The dialog sends one UUID per attempt. |
+| Revenue | Revenue, its trends/breakdowns and job profitability are computed net of tax (`total − tax_amount`, or `base_total − tax_amount × fx_rate`); `payments_collected` and receivable/ageing/outstanding still include tax because the customer pays it. |
+| Analytics freshness | `ensureFresh` also compares the refresh timestamp with the newest write across invoices, payments, jobs, job costs, work logs and expenses, so a changed workspace rebuilds on the next read instead of waiting out the freshness window. |
+| UI | Invoice lines show the net line amount with a discount note; customer detail uses `formatCalendarDate`; the location dialog exposes an optional IANA time zone; job/convert dialogs read and submit wall-clock values in the location's zone. |
+
+Design documents reconciled in the same change: `docs/LLD.md` §22 (contract, rules, verification) and
+`docs/ERD.md` §12 (columns, index, invariants), with §4.5–§4.7 and §21.5 updated to match.
+
+### 17.3 Verification actually run (session 9)
+
+| Check | Result |
+| --- | --- |
+| `mvn test` (JDK 21, embedded PostgreSQL 16, Flyway V1→V8 + `ddl-auto=validate`) | **81 tests, 0 failures** (was 68). Per class: `AuthFlowIT` 12, `GlobalFoundationIT` 10, `FinancialFoundationIT` 8, `SchedulingTimezoneIT` 8, `SpaHostingIT` 7, `MoneyCalculatorTest` 14, `AiGuardTest` 4, `AnalyticsFlowIT` 4, `WebStaticConfigTest` 4, `PaymentIdempotencyIT` 3, `AiFlowIT` 2, `CostingFlowIT` 2, `SalesFlowIT` 2, `TaxExclusiveRevenueIT` 1 |
+| `mvn verify` | tests pass; the repackage step fails **only** because the dev API (PID 19324, port 8090) holds `target/operonix-api.jar` — the documented Windows jar-lock limitation, not a code defect |
+| `npm run typecheck` | clean |
+| `npm run build` | green — 453.64 kB JS / 36.32 kB CSS |
+| Wall-clock helpers executed directly (`node`, real `Intl` data) | `toZonedLocalValue('2026-11-02T17:00:00Z','America/Los_Angeles')` → `2026-11-02T09:00`; same instant in `Asia/Kolkata` → `2026-11-02T22:30`; `zonedDefaultWindow('America/Los_Angeles')` → tomorrow `09:00`–`11:00` in that zone; `addMinutesToLocal('2026-03-08T01:30',120)` → `03:30` (pure wall clock) |
+
+### 17.4 Files created or modified (session 9)
+
+**Backend — new:** `common/time/WorkspaceZone.java`, `db/migration/V8__scheduling_timezone_and_payment_idempotency.sql`,
+`test/.../scheduling/SchedulingTimezoneIT.java`, `test/.../billing/PaymentIdempotencyIT.java`,
+`test/.../analytics/TaxExclusiveRevenueIT.java`.
+
+**Backend — modified:** `scheduling/{JobService, dto/JobDtos}`, `billing/{InvoiceService, Payment,
+PaymentRepository, dto/InvoiceDtos}`, `customer/{CustomerService, ServiceLocation, dto/CustomerDtos}`,
+`global/CostingService`, `analytics/{AnalyticsService, AnalyticsQueryRepository, AnalyticsRollupRepository,
+MetricDefinition}`, `test/support/AbstractIntegrationTest`, `test/.../analytics/AnalyticsFlowIT`.
+
+**Frontend — modified:** `api/{endpoints,types}.ts`, `lib/format.ts`, `components/{JobDialog,
+ConvertQuoteDialog, LocationDialog, RecordPaymentDialog, JobDetail, JobCostingPanel}.tsx`,
+`pages/{CustomerDetail, InvoiceDetail, QuoteDetail, Analytics}.tsx`.
+
+**Docs:** `docs/LLD.md` §4.5–§4.7, §21.5, new §22; `docs/ERD.md` §3.5, §3.13, new §12; this section.
+`docs/screenshots/{analytics,job-costing}.png` were already present from the previous session.
+
+### 17.5 Deviations from the approved designs
+
+| Intent | What shipped | Why |
+| --- | --- | --- |
+| `revenue` = sum of issued invoice totals | revenue net of tax | Collected tax is a liability, not income; the definition change is recorded in `MetricDefinition`, LLD §22.3 and ERD §12 so every consumer states one basis |
+| Scheduling request carried instants only | additive `startLocal`/`endLocal`; instants still accepted | Keeps existing API clients working while removing the device zone from the calculation |
+| Location zone derived from the address | optional IANA field, validated but not geocoded | Guessing a zone from an address would be wrong more often than asking, and country alone cannot decide it (US, AU, BR, RU span several zones) |
+
+### 17.6 Known limitations (open)
+
+- The location time zone is typed, not derived: a valid but wrong zone is accepted (e.g. `America/Chicago`
+  for an LA site). It is visible on the location and correctable; no geocoding is planned yet.
+- A **simultaneous** duplicate payment (two requests with the same key racing) is rejected by the unique
+  index and returns `409 CONFLICT` rather than the original payment; the sequential retry path replays
+  cleanly. The client re-reads the invoice and finds one payment.
+- Analytics rollups are still built lazily on first read, so `metric_daily` can be empty until a workspace
+  opens analytics or the refresh job runs.
+- Sub-minute work logs still cost `0.00` (whole-minute labour).
+- Onboarding still defaults the workspace zone to the browser zone.
+- No browser session this session: UI behaviour is covered by typecheck, the production build and direct
+  execution of the wall-clock helpers; no screenshot was captured.
+- `mvn package`/`verify` repackage fails while a dev API holds `target/operonix-api.jar` on Windows.
+
+### 17.7 How to resume
+
+1. Read this section, `docs/LLD.md` §22, `docs/ERD.md` §12.
+2. `cd backend && mvn test` → expect **81 tests, 0 failures**. `cd frontend && npm run typecheck && npm run build`.
+3. Live stack (do not bind 8080; DocSync owns it):
+   `mvn -DskipTests package` then `java -jar target/operonix-api.jar --spring.profiles.active=dev
+   --server.port=8090 --server.address=127.0.0.1`, and `VITE_API_PROXY_TARGET=http://localhost:8090 npm run dev`.
+   Stop the old API process first or the jar cannot be repackaged.
+4. Remaining P3 candidates (payment capture, email/SMS, customer portal, attachments, Playwright) are not
+   started and need owner approval; nothing is deployed and no cloud resource exists.

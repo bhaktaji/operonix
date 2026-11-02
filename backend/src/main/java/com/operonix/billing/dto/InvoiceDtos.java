@@ -68,7 +68,9 @@ public final class InvoiceDtos {
             @NotNull @DecimalMin(value = "0.01") @Digits(integer = 10, fraction = 2) BigDecimal amount,
             @NotBlank String method,
             @Size(max = 120) String reference,
-            Instant paidAt
+            Instant paidAt,
+            /** Optional client key; repeating the same key returns the original payment. */
+            @Size(max = 64) String idempotencyKey
     ) {
     }
 

@@ -46,6 +46,13 @@ public class ServiceLocation extends TenantEntity {
     @Column(name = "access_notes", length = 1000)
     private String accessNotes;
 
+    /**
+     * IANA zone the work at this address happens in. Null falls back to the workspace zone, so a
+     * single-region business never has to set it.
+     */
+    @Column(name = "timezone", length = 64)
+    private String timezone;
+
     @Column(name = "is_primary", nullable = false)
     private boolean primary;
 

@@ -6,6 +6,7 @@ import com.operonix.common.api.PageRequests;
 import com.operonix.common.api.PageResponse;
 import com.operonix.common.error.ApiException;
 import com.operonix.common.error.ErrorCode;
+import com.operonix.common.time.WorkspaceZone;
 import com.operonix.customer.dto.CustomerDtos;
 import com.operonix.security.CurrentUser;
 import jakarta.persistence.criteria.Predicate;
@@ -263,6 +264,7 @@ public class CustomerService {
         location.setPostalCode(trim(request.postalCode()));
         location.setCountry(request.country().trim().toUpperCase(Locale.ROOT));
         location.setAccessNotes(trimToNull(request.accessNotes()));
+        location.setTimezone(normalizeTimezone(request.timezone()));
         location.setPrimary(primary);
     }
 
@@ -305,6 +307,21 @@ public class CustomerService {
         } catch (IllegalArgumentException ex) {
             throw ApiException.validation("status", "must be ACTIVE, ARCHIVED or ALL");
         }
+    }
+
+    /**
+     * A location time zone must be a real IANA id; blank means "same as the workspace", which is what
+     * an existing single-region location gets.
+     */
+    private String normalizeTimezone(String timezone) {
+        if (isBlank(timezone)) {
+            return null;
+        }
+        String value = timezone.trim();
+        if (!WorkspaceZone.isValid(value)) {
+            throw ApiException.validation("timezone", "must be an IANA time zone such as America/Los_Angeles");
+        }
+        return value;
     }
 
     private String trim(String value) {

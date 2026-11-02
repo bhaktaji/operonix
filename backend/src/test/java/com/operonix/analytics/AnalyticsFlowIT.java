@@ -227,6 +227,56 @@ class AnalyticsFlowIT extends AbstractIntegrationTest {
         assertDecimal(metric(overview, "jobs_completed"), "1");
     }
 
+    /**
+     * A workspace can issue an invoice seconds after a refresh. The time-based freshness window used
+     * to consider that rollup "fresh" and report revenue that omitted the new invoice, so the
+     * dashboard contradicted the profit table on the same page.
+     */
+    @Test
+    void aWriteSinceTheLastRefreshRebuildsTheRollupWithoutAnExplicitRefresh() throws Exception {
+        Session owner = register("Freshness Metrics Co", "owner@freshnessmetrics.example");
+        UUID customer = createCustomer(owner, "Granite Bay Offices");
+        UUID location = locationOf(owner, customer);
+        UUID service = createService(owner, "Washroom supply audit", "120.00", "0");
+        LocalDate today = LocalDate.now();
+
+        UUID firstJob = completedJob(owner, customer, location, service, today, "T09:00:00Z");
+        postJson("/api/v1/jobs/" + firstJob + "/invoice", Map.of(), owner, 201);
+
+        // Refresh, then write again inside the freshness window.
+        postJson("/api/v1/analytics/refresh", Map.of(), owner, 200);
+        assertDecimal(metric(getJson("/api/v1/analytics/overview", owner, 200), "revenue"), "120.00");
+
+        UUID secondJob = completedJob(owner, customer, location, service, today, "T13:00:00Z");
+        postJson("/api/v1/jobs/" + secondJob + "/invoice", Map.of(), owner, 201);
+
+        // No refresh call here: the read path must notice the invoice and rebuild.
+        JsonNode overview = getJson("/api/v1/analytics/overview", owner, 200);
+        assertDecimal(metric(overview, "revenue"), "240.00");
+        assertDecimal(metric(overview, "invoices_issued"), "2");
+        assertThat(getJson("/api/v1/analytics/jobs", owner, 200).get("rows").size()).isEqualTo(2);
+    }
+
+    private UUID completedJob(Session owner, UUID customer, UUID location, UUID service, LocalDate day,
+                             String startTime) throws Exception {
+        JsonNode quote = postJson("/api/v1/quotes", Map.of(
+                "customerId", customer, "locationId", location,
+                "lines", List.of(Map.of("serviceItemId", service, "quantity", 1))), owner, 201);
+        UUID quoteId = UUID.fromString(quote.get("id").asText());
+        postJson("/api/v1/quotes/" + quoteId + "/send", null, owner, 200);
+        postJson("/api/v1/quotes/" + quoteId + "/accept", null, owner, 200);
+        int hour = Integer.parseInt(startTime.substring(1, 3)) + 1;
+        String endTime = "T" + String.format("%02d", hour) + ":00:00Z";
+        JsonNode job = postJson("/api/v1/quotes/" + quoteId + "/convert", Map.of(
+                "scheduledStart", day + startTime,
+                "scheduledEnd", day + endTime,
+                "technicianIds", List.of(owner.userId())), owner, 201);
+        UUID jobId = UUID.fromString(job.get("id").asText());
+        postJson("/api/v1/jobs/" + jobId + "/transitions", Map.of("to", "IN_PROGRESS"), owner, 200);
+        postJson("/api/v1/jobs/" + jobId + "/transitions", Map.of("to", "COMPLETED"), owner, 200);
+        return jobId;
+    }
+
     private void assertDecimal(JsonNode node, String expected) {
         assertThat(node.decimalValue()).isEqualByComparingTo(new BigDecimal(expected));
     }

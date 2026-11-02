@@ -189,7 +189,7 @@ export function InvoiceDetail() {
                     <th className="table-head text-right">Qty</th>
                     <th className="table-head text-right">Unit price</th>
                     <th className="table-head text-right">Tax</th>
-                    <th className="table-head text-right">Total</th>
+                    <th className="table-head text-right">Amount</th>
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-sand-100">
@@ -199,12 +199,20 @@ export function InvoiceDetail() {
                       <td className="table-cell text-right">{Number(line.quantity)}</td>
                       <td className="table-cell text-right">{formatMoney(line.unitPrice, data.currency)}</td>
                       <td className="table-cell text-right">{formatPercent(line.taxRate)}</td>
-                      <td className="table-cell text-right font-medium text-ink-900">{formatMoney(line.lineTotal, data.currency)}</td>
+                      {/* Net of tax: the line amounts add up to the subtotal, and the summary applies
+                          the invoice-level discount and adds the tax once. */}
+                      <td className="table-cell text-right font-medium text-ink-900">{formatMoney(line.lineSubtotal, data.currency)}</td>
                     </tr>
                   ))}
                 </tbody>
               </table>
             </div>
+            {data.discountAmount > 0 && (
+              <p className="border-t border-sand-100 px-5 py-3 text-[12px] text-ink-500">
+                The discount applies to the invoice rather than to one line, so the line amounts add
+                up to the subtotal and the discount is deducted once in Amounts.
+              </p>
+            )}
           </SectionCard>
 
           <SectionCard

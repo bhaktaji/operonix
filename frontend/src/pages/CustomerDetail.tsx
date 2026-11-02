@@ -19,13 +19,15 @@ import { Badge, Button, Card, EmptyState, ErrorBanner, PageLoader, SectionCard }
 import { ConfirmDialog } from "@/components/ui/Modal";
 import { useToast } from "@/components/ui/toast";
 import { statusTone } from "@/components/ui/cn";
-import { formatDate, labelize } from "@/lib/format";
+import { formatCalendarDate, labelize } from "@/lib/format";
+import { useAuth } from "@/auth/AuthProvider";
 
 export function CustomerDetail() {
   const { customerId = "" } = useParams();
   const navigate = useNavigate();
   const queryClient = useQueryClient();
   const toast = useToast();
+  const { tenant } = useAuth();
 
   const [editOpen, setEditOpen] = useState(false);
   const [locationOpen, setLocationOpen] = useState(false);
@@ -102,7 +104,7 @@ export function CustomerDetail() {
             <Badge tone={statusTone(data.status)}>{labelize(data.status)}</Badge>
           </div>
           <p className="mt-1.5 text-sm text-ink-500">
-            Customer since {formatDate(data.createdAt)}
+            Customer since {formatCalendarDate(data.createdAt, tenant?.timezone)}
           </p>
         </div>
         <div className="flex flex-wrap gap-2">
@@ -184,7 +186,7 @@ export function CustomerDetail() {
             </li>
             <li className="flex justify-between gap-3">
               <span className="text-ink-500">Last updated</span>
-              <span className="font-medium text-ink-900">{formatDate(data.updatedAt)}</span>
+              <span className="font-medium text-ink-900">{formatCalendarDate(data.updatedAt, tenant?.timezone)}</span>
             </li>
           </ul>
         </Card>

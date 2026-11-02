@@ -107,6 +107,8 @@ export function JobDetail({
   const available = (team.data ?? []).filter(
     (member) => !job.technicians.some((tech) => tech.id === member.id),
   );
+  // The visit happens in the location's zone; the workspace zone is only the fallback.
+  const jobZone = job.location?.timezone ?? tenant?.timezone;
 
   return (
     <Modal
@@ -119,7 +121,7 @@ export function JobDetail({
           <Badge tone={statusTone(job.status)}>{labelize(job.status)}</Badge>
         </span>
       }
-      description={`${job.title} · ${formatCalendarDate(job.scheduledStart, tenant?.timezone)}`}
+      description={`${job.title} · ${formatCalendarDate(job.scheduledStart, jobZone)}`}
       footer={
         <>
           <Button variant="outline" type="button" onClick={onClose}>Close</Button>
@@ -199,10 +201,10 @@ export function JobDetail({
           <div>
             <p className="text-[11px] font-semibold uppercase tracking-[0.12em] text-ink-400">Window</p>
             <p className="mt-1 text-sm text-ink-800">
-              {formatCalendarDate(job.scheduledStart, tenant?.timezone)} · {
-                formatTime(job.scheduledStart, tenant?.timezone)
+              {formatCalendarDate(job.scheduledStart, jobZone)} · {
+                formatTime(job.scheduledStart, jobZone)
               }{" – "}
-              {formatTime(job.scheduledEnd, tenant?.timezone)}
+              {formatTime(job.scheduledEnd, jobZone)}
             </p>
           </div>
           <div>
@@ -262,7 +264,7 @@ export function JobDetail({
           )}
         </div>
 
-        <JobCostingPanel jobId={job.id} canManage={canManage} />
+        <JobCostingPanel jobId={job.id} canManage={canManage} timezone={jobZone} />
 
         {job.notes && (
           <div>

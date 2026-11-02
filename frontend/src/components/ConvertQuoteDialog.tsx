@@ -6,17 +6,8 @@ import { errorMessage } from "@/api/client";
 import { Button, ErrorBanner, Field, Input } from "@/components/ui/primitives";
 import { Modal } from "@/components/ui/Modal";
 import { useToast } from "@/components/ui/toast";
-import { addMinutes, fromDateTimeLocal, toDateTimeLocal } from "@/lib/format";
-
-function defaultWindow() {
-  const start = new Date();
-  start.setDate(start.getDate() + 1);
-  start.setHours(9, 0, 0, 0);
-  return {
-    start: toDateTimeLocal(start),
-    end: toDateTimeLocal(new Date(start.getTime() + 2 * 60 * 60 * 1000)),
-  };
-}
+import { addMinutesToLocal, zonedDefaultWindow } from "@/lib/format";
+import { useAuth } from "@/auth/AuthProvider";
 
 export function ConvertQuoteDialog({
   open,
@@ -31,7 +22,10 @@ export function ConvertQuoteDialog({
 }) {
   const queryClient = useQueryClient();
   const toast = useToast();
-  const initial = defaultWindow();
+  const { tenant } = useAuth();
+  // The quote's service location decides what "09:00" means; the workspace is the fallback.
+  const zone = quote.location?.timezone ?? tenant?.timezone;
+  const initial = zonedDefaultWindow(zone);
   const [start, setStart] = useState(initial.start);
   const [end, setEnd] = useState(initial.end);
   const [title, setTitle] = useState("");
@@ -42,18 +36,18 @@ export function ConvertQuoteDialog({
 
   useEffect(() => {
     if (!open) return;
-    const window = defaultWindow();
+    const window = zonedDefaultWindow(zone);
     setStart(window.start);
     setEnd(window.end);
     setTitle(`Service for ${quote.customer?.name ?? "customer"}`);
     setTechnicianIds([]);
     setError(null);
-  }, [open, quote.customer?.name]);
+  }, [open, quote.customer?.name, zone]);
 
   const mutation = useMutation({
     mutationFn: () => quotesApi.convert(quote.id, {
-      scheduledStart: fromDateTimeLocal(start),
-      scheduledEnd: fromDateTimeLocal(end),
+      startLocal: start,
+      endLocal: end,
       technicianIds,
       title: title.trim() || undefined,
     }),
@@ -129,7 +123,7 @@ export function ConvertQuoteDialog({
               onChange={(event) => {
                 setStart(event.target.value);
                 if (event.target.value) {
-                  setEnd(toDateTimeLocal(addMinutes(fromDateTimeLocal(event.target.value), 120)));
+                  setEnd(addMinutesToLocal(event.target.value, 120));
                 }
               }}
             />

@@ -202,6 +202,53 @@ export function startOfWeekISO(dateISO: string = todayISO()): string {
 }
 
 /** yyyy-mm-ddTHH:mm in the browser's zone, suitable for datetime-local inputs. */
+/**
+ * Wall-clock helpers for scheduling. A visit's time belongs to the location the work happens at, so
+ * these convert between instants and the `datetime-local` value a person types in that zone. The
+ * device's own zone is never used: a Kolkata laptop booking an LA site must offer 09:00 in LA.
+ */
+function zonedParts(value: Date, timeZone?: string): Record<string, string> {
+  const format = new Intl.DateTimeFormat("en-CA", {
+    timeZone,
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+    hour: "2-digit",
+    minute: "2-digit",
+    hourCycle: "h23",
+  });
+  const parts: Record<string, string> = {};
+  for (const part of format.formatToParts(value)) {
+    parts[part.type] = part.value;
+  }
+  return parts;
+}
+
+/** The `datetime-local` value of an instant in the given zone, e.g. `2026-11-02T09:00`. */
+export function toZonedLocalValue(value: string | Date, timeZone?: string): string {
+  const parts = zonedParts(typeof value === "string" ? new Date(value) : value, timeZone);
+  return `${parts.year}-${parts.month}-${parts.day}T${parts.hour}:${parts.minute}`;
+}
+
+/** The calendar date `dayOffset` days from today in the given zone, as `YYYY-MM-DD`. */
+export function zonedDateIn(timeZone: string | undefined, dayOffset: number): string {
+  const parts = zonedParts(new Date(), timeZone);
+  const base = new Date(Date.UTC(Number(parts.year), Number(parts.month) - 1, Number(parts.day) + dayOffset));
+  return base.toISOString().slice(0, 10);
+}
+
+/** Default booking window: tomorrow 09:00-11:00 in the zone the work belongs to. */
+export function zonedDefaultWindow(timeZone?: string): { start: string; end: string } {
+  const day = zonedDateIn(timeZone, 1);
+  return { start: `${day}T09:00`, end: `${day}T11:00` };
+}
+
+/** Arithmetic on a wall-clock value; no zone is involved, so an hour stays an hour. */
+export function addMinutesToLocal(value: string, minutes: number): string {
+  const base = new Date(`${value.slice(0, 16)}:00Z`);
+  return new Date(base.getTime() + minutes * 60_000).toISOString().slice(0, 16);
+}
+
 export function toDateTimeLocal(value: string | Date): string {
   const date = typeof value === "string" ? new Date(value) : value;
   const offset = date.getTimezoneOffset();

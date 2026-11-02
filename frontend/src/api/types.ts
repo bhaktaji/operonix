@@ -108,6 +108,8 @@ export interface ServiceLocation {
   postalCode: string;
   country: string;
   accessNotes?: string | null;
+  /** IANA zone the work happens in; null means "same as the workspace". */
+  timezone?: string | null;
   isPrimary: boolean;
 }
 
@@ -535,8 +537,9 @@ export interface JobInput {
   customerId: string;
   locationId: string;
   title?: string;
-  scheduledStart: string;
-  scheduledEnd: string;
+  /** Wall-clock values in the location's zone; the server resolves them to instants. */
+  startLocal: string;
+  endLocal: string;
   technicianIds: string[];
   notes?: string;
 }

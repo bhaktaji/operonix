@@ -24,6 +24,9 @@ export function RecordPaymentDialog({
   const [reference, setReference] = useState("");
   const [paidAt, setPaidAt] = useState(toDateTimeLocal(new Date()));
   const [error, setError] = useState<string | null>(null);
+  // One key per attempt: if the request times out and the user presses the button again, the server
+  // recognises the retry and does not record the money twice.
+  const [idempotencyKey, setIdempotencyKey] = useState(() => crypto.randomUUID());
 
   useEffect(() => {
     if (!open) return;
@@ -31,6 +34,7 @@ export function RecordPaymentDialog({
     setMethod("CASH");
     setReference("");
     setPaidAt(toDateTimeLocal(new Date()));
+    setIdempotencyKey(crypto.randomUUID());
     setError(null);
   }, [open, invoice]);
 
@@ -40,6 +44,7 @@ export function RecordPaymentDialog({
       method,
       reference: reference.trim() || undefined,
       paidAt: paidAt ? fromDateTimeLocal(paidAt) : undefined,
+      idempotencyKey,
     }),
     onSuccess: async () => {
       toast.push({ title: "Payment recorded" });

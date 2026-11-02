@@ -18,6 +18,9 @@ public interface PaymentRepository extends JpaRepository<Payment, UUID> {
 
     Optional<Payment> findByIdAndTenantIdAndInvoiceId(UUID id, UUID tenantId, UUID invoiceId);
 
+    /** Backs payment idempotency: a replayed request finds the payment it already created. */
+    Optional<Payment> findFirstByTenantIdAndIdempotencyKey(UUID tenantId, String idempotencyKey);
+
     // Reversed payments stay in the table for the audit trail, so every money aggregate has to
     // exclude them explicitly; otherwise a refunded payment would keep counting as collected cash.
 

@@ -52,6 +52,28 @@ public class AnalyticsRollupRepository {
     }
 
     /**
+     * The newest write to any source row this rollup is derived from.
+     *
+     * <p>Time-based staleness alone is not enough: an invoice issued a minute after the last refresh
+     * leaves the rollup "fresh" while the revenue it reports is already wrong. Comparing the refresh
+     * timestamp with the newest source write makes a changed workspace rebuild immediately, and a
+     * workspace that has not changed since reads straight from the rollup.
+     */
+    public Optional<java.time.Instant> latestSourceChange(UUID tenantId) {
+        Timestamp latest = jdbc.queryForObject("""
+                select greatest(
+                    coalesce((select max(updated_at) from invoice where tenant_id = ?), to_timestamp(0)),
+                    coalesce((select max(created_at) from payment where tenant_id = ?), to_timestamp(0)),
+                    coalesce((select max(updated_at) from job where tenant_id = ?), to_timestamp(0)),
+                    coalesce((select max(computed_at) from job_cost where tenant_id = ?), to_timestamp(0)),
+                    coalesce((select max(updated_at) from work_log where tenant_id = ?), to_timestamp(0)),
+                    coalesce((select max(updated_at) from expense where tenant_id = ?), to_timestamp(0))
+                )
+                """, Timestamp.class, tenantId, tenantId, tenantId, tenantId, tenantId, tenantId);
+        return latest == null ? Optional.empty() : Optional.of(latest.toInstant());
+    }
+
+    /**
      * Rebuilds every rolled-up metric for the given day range.
      *
      * @return number of metric_daily rows written
@@ -232,8 +254,8 @@ public class AnalyticsRollupRepository {
                    coalesce(j.location_id::text, '') as location_key,
                    j.location_id as location_id,
                    bl.name as label,
-                   sum(case when i.currency = ? then i.total
-                            when i.base_currency = ? then i.base_total
+                   sum(case when i.currency = ? then i.total - i.tax_amount
+                            when i.base_currency = ? then i.base_total - (i.tax_amount * i.fx_rate)
                             else 0 end) as value
             from invoice i
             left join job j on j.id = i.job_id and j.tenant_id = i.tenant_id

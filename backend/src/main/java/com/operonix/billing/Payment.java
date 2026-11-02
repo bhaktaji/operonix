@@ -58,6 +58,13 @@ public class Payment extends TenantEntity {
     @Column(name = "reversal_reason", length = 280)
     private String reversalReason;
 
+    /**
+     * Caller-supplied key that makes "record this payment" safe to retry: the same key in the same
+     * workspace resolves to the payment that already exists instead of taking the money twice.
+     */
+    @Column(name = "idempotency_key", length = 64)
+    private String idempotencyKey;
+
     public boolean isReversed() {
         return reversedAt != null;
     }

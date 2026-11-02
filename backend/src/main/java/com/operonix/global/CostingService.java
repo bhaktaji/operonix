@@ -400,18 +400,23 @@ public class CostingService {
         RollUp rollUp = rollUp(money, logs, jobExpenses);
         List<String> reasons = new ArrayList<>(rollUp.reasons());
 
-        // Revenue: invoices raised against this job, expressed in the workspace currency.
+        // Revenue: invoices raised against this job, expressed in the workspace currency. Tax is money
+        // collected for a tax authority, not income, so profit and margin are computed on the net of
+        // tax — the same basis analytics reports revenue in.
         BigDecimal revenue = money.zero();
         boolean revenueKnown = true;
         for (Invoice invoice : invoices.findByTenantIdAndJobId(job.getTenantId(), job.getId())) {
             if (invoice.getStatus() == InvoiceStatus.VOID) {
                 continue;
             }
+            BigDecimal gross = invoice.getTotal().subtract(invoice.getTaxAmount());
+            BigDecimal baseGross = invoice.getBaseTotal()
+                    .subtract(invoice.getTaxAmount().multiply(invoice.getFxRate()));
             BigDecimal inWorkspace = null;
             if (money.currency().equals(invoice.getCurrency())) {
-                inWorkspace = invoice.getTotal();
+                inWorkspace = gross;
             } else if (money.currency().equals(invoice.getBaseCurrency())) {
-                inWorkspace = invoice.getBaseTotal();
+                inWorkspace = baseGross;
             }
             if (inWorkspace == null) {
                 revenueKnown = false;
@@ -435,8 +440,11 @@ public class CostingService {
         if (job.getQuoteId() != null) {
             Quote quote = quotes.findDetailed(job.getQuoteId(), job.getTenantId()).orElse(null);
             if (quote != null) {
-                plannedRevenue = inWorkspace(quote.getTotal(), quote.getCurrency(),
-                        quote.getBaseTotal(), quote.getBaseCurrency(), money);
+                // Planned profit is also net of tax, so planned and actual compare on one basis.
+                plannedRevenue = inWorkspace(quote.getTotal().subtract(quote.getTaxAmount()),
+                        quote.getCurrency(),
+                        quote.getBaseTotal().subtract(quote.getTaxAmount().multiply(quote.getFxRate())),
+                        quote.getBaseCurrency(), money);
                 plannedCost = plannedCost(quote, money);
                 if (plannedCost == null) {
                     reasons.add("Some quoted items have no planned cost in the catalogue");

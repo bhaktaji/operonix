@@ -131,8 +131,9 @@ public class AnalyticsQueryRepository {
                                                        LocalDate to) {
         return jdbc.query("""
                         select c.id, c.name,
-                               sum(case when i.currency = ? then i.total
-                                        when i.base_currency = ? then i.base_total else 0 end) as revenue,
+                               sum(case when i.currency = ? then i.total - i.tax_amount
+                                        when i.base_currency = ? then i.base_total - (i.tax_amount * i.fx_rate)
+                                        else 0 end) as revenue,
                                count(distinct i.id) as invoices,
                                count(distinct i.job_id) as jobs
                         from invoice i
@@ -216,8 +217,9 @@ public class AnalyticsQueryRepository {
         return jdbc.query("""
                         select j.id, j.number, j.title, c.name as customer_name,
                                (coalesce(j.actual_end, j.scheduled_end) at time zone 'UTC')::date as delivered,
-                               coalesce((select sum(case when i.currency = ? then i.total
-                                                         when i.base_currency = ? then i.base_total
+                               coalesce((select sum(case when i.currency = ? then i.total - i.tax_amount
+                                                         when i.base_currency = ?
+                                                             then i.base_total - (i.tax_amount * i.fx_rate)
                                                          else 0 end)
                                            from invoice i
                                           where i.job_id = j.id and i.tenant_id = j.tenant_id
@@ -260,8 +262,10 @@ public class AnalyticsQueryRepository {
     public BigDecimal repeatCustomerRevenue(UUID tenantId, String currency, LocalDate from,
                                             LocalDate to) {
         BigDecimal value = jdbc.queryForObject("""
-                select coalesce(sum(case when i.currency = ? then i.total
-                                         when i.base_currency = ? then i.base_total else 0 end), 0)
+                select coalesce(sum(case when i.currency = ? then i.total - i.tax_amount
+                                         when i.base_currency = ?
+                                             then i.base_total - (i.tax_amount * i.fx_rate)
+                                         else 0 end), 0)
                 from invoice i
                 where i.tenant_id = ? and i.status <> 'VOID' and i.issue_date between ? and ?
                   and (select count(*) from invoice x

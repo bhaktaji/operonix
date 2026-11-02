@@ -6,7 +6,7 @@ import type { ExpenseCategory } from "@/api/types";
 import { errorMessage } from "@/api/client";
 import { Badge, Button, ErrorBanner, Field, Input, KeyValue, Select, Skeleton, Textarea } from "@/components/ui/primitives";
 import { useToast } from "@/components/ui/toast";
-import { formatMoney, formatPercent } from "@/lib/format";
+import { formatDateTime, formatMoney, formatPercent } from "@/lib/format";
 
 const CATEGORIES: ExpenseCategory[] = ["LABOR", "MATERIAL", "EQUIPMENT", "SUBCONTRACTOR", "OTHER"];
 
@@ -24,7 +24,9 @@ function duration(minutes: number | null | undefined): string {
  * <p>The design rule the backend enforces is mirrored here: when an input is missing the panel says
  * what is missing and shows "Not available" — it never renders a zero that would read as "no profit".
  */
-export function JobCostingPanel({ jobId, canManage }: { jobId: string; canManage: boolean }) {
+export function JobCostingPanel(
+  { jobId, canManage, timezone }: { jobId: string; canManage: boolean; timezone?: string },
+) {
   const queryClient = useQueryClient();
   const toast = useToast();
   const [error, setError] = useState<string | null>(null);
@@ -215,7 +217,7 @@ export function JobCostingPanel({ jobId, canManage }: { jobId: string; canManage
               <li key={log.id} className="flex flex-wrap items-center justify-between gap-2 px-3 py-2 text-[13px]">
                 <span className="text-ink-800">{log.userName}</span>
                 <span className="text-ink-500">
-                  {new Date(log.startAt).toLocaleString()} ·{" "}
+                  {formatDateTime(log.startAt, timezone)} ·{" "}
                   {log.endAt ? (
                     <>
                       {duration(log.minutes)} · {log.cost === null || log.cost === undefined

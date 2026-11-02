@@ -6,6 +6,7 @@ import com.operonix.common.api.PageRequests;
 import com.operonix.common.api.PageResponse;
 import com.operonix.common.error.ApiException;
 import com.operonix.common.error.ErrorCode;
+import com.operonix.common.time.WorkspaceZone;
 import com.operonix.config.OperonixProperties;
 import com.operonix.customer.Customer;
 import com.operonix.customer.CustomerService;
@@ -157,12 +158,14 @@ public class JobService {
         Tenant tenant = tenants.require(tenantId);
         Customer customer = customers.requireActive(tenantId, request.customerId());
         ServiceLocation location = customers.requireLocation(tenantId, customer.getId(), request.locationId());
-        validateWindow(request.scheduledStart(), request.scheduledEnd());
+        JobDtos.Window window = window(tenant, location, request.scheduledStart(), request.scheduledEnd(),
+                request.startLocal(), request.endLocal());
+        validateWindow(window.start(), window.end());
         List<AppUser> technicians = requireAssignableUsers(tenantId, request.technicianIds());
-        assertNoConflicts(tenantId, ids(technicians), request.scheduledStart(), request.scheduledEnd(), null);
+        assertNoConflicts(tenantId, ids(technicians), window.start(), window.end(), null);
 
-        Job job = buildJob(tenant, customer, location, request.title(), request.scheduledStart(),
-                request.scheduledEnd(), request.notes(), null, Recurrence.NONE, null);
+        Job job = buildJob(tenant, customer, location, request.title(), window.start(),
+                window.end(), request.notes(), null, Recurrence.NONE, null);
         replaceAssignments(job, technicians);
         jobs.save(job);
 
@@ -187,13 +190,17 @@ public class JobService {
         }
         Customer customer = customers.requireActive(tenantId, request.customerId());
         ServiceLocation location = customers.requireLocation(tenantId, customer.getId(), request.locationId());
-        validateWindow(request.scheduledStart(), request.scheduledEnd());
+        JobDtos.Window window = window(tenant, location, request.scheduledStart(), request.scheduledEnd(),
+                request.startLocal(), request.endLocal());
+        validateWindow(window.start(), window.end());
         List<AppUser> technicians = requireAssignableUsers(tenantId, request.technicianIds());
         Set<UUID> technicianIds = ids(technicians);
 
-        ZoneId zone = ZoneId.of(tenant.getTimezone());
-        ZonedDateTime firstStart = request.scheduledStart().atZone(zone);
-        Duration duration = Duration.between(request.scheduledStart(), request.scheduledEnd());
+        // Recurring visits repeat the location's local wall-clock time, so a series across a DST change
+        // keeps the same start hour for the crew rather than drifting by an hour.
+        ZoneId zone = window.zone();
+        ZonedDateTime firstStart = window.start().atZone(zone);
+        Duration duration = Duration.between(window.start(), window.end());
 
         List<Job> series = new ArrayList<>(occurrences);
         UUID seriesId = null;
@@ -228,15 +235,18 @@ public class JobService {
         }
         Customer customer = customers.requireActive(tenantId, request.customerId());
         ServiceLocation location = customers.requireLocation(tenantId, customer.getId(), request.locationId());
-        validateWindow(request.scheduledStart(), request.scheduledEnd());
+        Tenant tenant = tenants.require(tenantId);
+        JobDtos.Window window = window(tenant, location, request.scheduledStart(), request.scheduledEnd(),
+                request.startLocal(), request.endLocal());
+        validateWindow(window.start(), window.end());
         List<AppUser> technicians = requireAssignableUsers(tenantId, request.technicianIds());
-        assertNoConflicts(tenantId, ids(technicians), request.scheduledStart(), request.scheduledEnd(), job.getId());
+        assertNoConflicts(tenantId, ids(technicians), window.start(), window.end(), job.getId());
 
         job.setCustomerId(customer.getId());
         job.setLocationId(location.getId());
-        job.setTitle(defaultTitle(request.title(), customer, tenants.require(tenantId)));
-        job.setScheduledStart(request.scheduledStart());
-        job.setScheduledEnd(request.scheduledEnd());
+        job.setTitle(defaultTitle(request.title(), customer, tenant));
+        job.setScheduledStart(window.start());
+        job.setScheduledEnd(window.end());
         job.setNotes(trimToNull(request.notes()));
         replaceAssignments(job, technicians);
 
@@ -321,16 +331,18 @@ public class JobService {
         UUID tenantId = currentUser.tenantId();
         Tenant tenant = tenants.require(tenantId);
         Quote quote = quotes.requireConvertible(quoteId);
-        validateWindow(request.scheduledStart(), request.scheduledEnd());
         List<AppUser> technicians = requireAssignableUsers(tenantId, request.technicianIds());
         Customer customer = customers.requireActive(tenantId, quote.getCustomerId());
         ServiceLocation location = quote.getLocationId() == null
                 ? customers.defaultLocation(tenantId, customer.getId())
                 : customers.requireLocation(tenantId, customer.getId(), quote.getLocationId());
-        assertNoConflicts(tenantId, ids(technicians), request.scheduledStart(), request.scheduledEnd(), null);
+        JobDtos.Window window = window(tenant, location, request.scheduledStart(), request.scheduledEnd(),
+                request.startLocal(), request.endLocal());
+        validateWindow(window.start(), window.end());
+        assertNoConflicts(tenantId, ids(technicians), window.start(), window.end(), null);
 
-        Job job = buildJob(tenant, customer, location, request.title(), request.scheduledStart(),
-                request.scheduledEnd(), quote.getNotes(), quote.getId(), Recurrence.NONE, null);
+        Job job = buildJob(tenant, customer, location, request.title(), window.start(),
+                window.end(), quote.getNotes(), quote.getId(), Recurrence.NONE, null);
         replaceAssignments(job, technicians);
         jobs.save(job);
         quotes.markConverted(quoteId, job.getId());
@@ -489,6 +501,36 @@ public class JobService {
                     "One or more technicians are already booked in this window")
                     .withProperty("conflicts", conflicts);
         }
+    }
+
+    /**
+     * Resolves the requested window into UTC instants using the location's time zone (falling back to
+     * the workspace's). The caller's device zone never enters: a wall-clock value is what the customer
+     * and crew mean, and it is the location that decides what that means.
+     */
+    private JobDtos.Window window(Tenant tenant, ServiceLocation location, Instant start, Instant end,
+                                  String startLocal, String endLocal) {
+        ZoneId zone = WorkspaceZone.of(location == null ? null : location.getTimezone(),
+                tenant.getTimezone());
+        return new JobDtos.Window(
+                resolveWindowValue(start, startLocal, zone, "startLocal", "scheduledStart"),
+                resolveWindowValue(end, endLocal, zone, "endLocal", "scheduledEnd"),
+                zone);
+    }
+
+    private static Instant resolveWindowValue(Instant instant, String local, ZoneId zone,
+                                              String localField, String instantField) {
+        boolean hasLocal = local != null && !local.isBlank();
+        if (hasLocal && instant != null) {
+            throw ApiException.validation(localField, "send either a wall-clock value or an instant, not both");
+        }
+        if (hasLocal) {
+            return WorkspaceZone.resolveLocal(local, zone, localField);
+        }
+        if (instant == null) {
+            throw ApiException.validation(instantField, "is required");
+        }
+        return instant;
     }
 
     private void validateWindow(Instant start, Instant end) {

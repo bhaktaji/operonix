@@ -267,7 +267,7 @@ Units: `HOUR`, `VISIT`, `SQUARE_FOOT`, `ROOM`, `FLAT`.
 | POST | `/quotes/{id}/send` | OWNER, ADMIN, MANAGER | `DRAFT → SENT` |
 | POST | `/quotes/{id}/accept` | OWNER, ADMIN, MANAGER | `SENT → ACCEPTED`; rejects expired (`409`) |
 | POST | `/quotes/{id}/decline` | OWNER, ADMIN, MANAGER | `SENT → DECLINED` |
-| POST | `/quotes/{id}/convert` | OWNER, ADMIN, MANAGER | `ACCEPTED → CONVERTED`; body `{scheduledStart, scheduledEnd, technicianIds[], title?}`; returns created job |
+| POST | `/quotes/{id}/convert` | OWNER, ADMIN, MANAGER | `ACCEPTED → CONVERTED`; body `{startLocal, endLocal, technicianIds[], title?}` (instants also accepted, §22.1); returns created job |
 
 Line input: `{serviceItemId?, description, quantity, unitPrice, taxRate}`. When `serviceItemId` is
 present the server **snapshots** the catalog description/price/tax only if the client omits the
@@ -282,7 +282,7 @@ Quote JSON adds: `number` (`Q-2026-0001`), `status`, `subtotal`, `discountAmount
 | Method | Path | Roles | Notes |
 | --- | --- | --- | --- |
 | GET | `/jobs` | all | `from, to (ISO date), status, technicianId, customerId, mine=true, page, size`; sorted by `scheduledStart,asc` |
-| POST | `/jobs` | OWNER, ADMIN, MANAGER | Ad-hoc job: `{customerId, locationId, title, scheduledStart, scheduledEnd, technicianIds[], notes?}` |
+| POST | `/jobs` | OWNER, ADMIN, MANAGER | Ad-hoc job: `{customerId, locationId, title, startLocal, endLocal, technicianIds[], notes?}` (instants also accepted, §22.1) |
 | POST | `/jobs/series` | OWNER, ADMIN, MANAGER | Same body + `recurrence` (`WEEKLY`,`BIWEEKLY`,`MONTHLY`) + `occurrences` (2–26) |
 | GET | `/jobs/{id}` | all | Technicians may only read jobs assigned to them |
 | PUT | `/jobs/{id}` | OWNER, ADMIN, MANAGER | Editable while `SCHEDULED`; triggers conflict check |
@@ -316,7 +316,7 @@ Job JSON:
 | PUT | `/invoices/{id}` | OWNER, ADMIN, MANAGER | Draft only |
 | POST | `/invoices/{id}/send` | OWNER, ADMIN, MANAGER | `DRAFT → SENT`; sets `dueDate` default +14d if absent |
 | POST | `/invoices/{id}/void` | OWNER, ADMIN, MANAGER | `{reason}`; requires `amountPaid = 0` |
-| POST | `/invoices/{id}/payments` | OWNER, ADMIN, MANAGER | `{amount, method, reference?, paidAt?}` → `201 Payment` |
+| POST | `/invoices/{id}/payments` | OWNER, ADMIN, MANAGER | `{amount, method, reference?, paidAt?, idempotencyKey?}` → `201 Payment`; a repeated key returns the original payment (§22.2) |
 | DELETE | `/invoices/{id}/payments/{paymentId}` | OWNER, ADMIN | Reversal (audited), recomputes status |
 
 Invoice JSON includes `number` (`INV-2026-0007`), `status`, `overdue`, `subtotal`, `discountAmount`,
@@ -449,7 +449,7 @@ but must be in the allowed set. Validation messages are field-scoped.
 | `taxRate` | 0.0000–1.0000 |
 | `discountAmount` | ≥ 0, ≤ subtotal (validated after pricing) |
 | `validUntil` | ≥ `issueDate` |
-| `scheduledStart` / `scheduledEnd` | required; end > start; duration 15 min–24 h; start not more than 2 years ahead |
+| schedule window | one of `startLocal`/`endLocal` (wall clock, no offset) or `scheduledStart`/`scheduledEnd` (instants), never both; end > start; duration 15 min–24 h; start not more than 2 years ahead (§22.1) |
 | `occurrences` | 2–26 (series only) |
 | `amount` (payment) | > 0, scale ≤ 2, ≤ balance |
 | `reason` (void/cancel) | 3–500 chars |
@@ -1076,22 +1076,94 @@ create-workspace call genuinely has no request tenant. Regression:
   `job_cost.labor_cost` stays zero for it.
 - The onboarding timezone defaults to the **browser** timezone; the country reference data carries
   currency/locale only, so choosing Japan from a device set to another zone needs a manual timezone edit.
-- There is no idempotency key on `POST /invoices/{id}/payments`; the dialog's pending state prevents the
-  common double-click (verified: two synchronous clicks created one payment), but a retried request from a
-  flaky client would record twice.
+- ~~No idempotency key on `POST /invoices/{id}/payments`~~ — resolved in §22.2 (V8).
 - Analytics rollup rows are per tenant and built lazily on read, so a workspace that never opens analytics
   has an empty `metric_daily` until the first read or the scheduled job runs.
-- Scheduling inputs (`datetime-local` in the quote conversion, job and payment dialogs) are interpreted in
-  the **device** time zone, while every display uses the workspace zone. With device and workspace in the
-  same zone — the normal case — this is invisible; a device set to IST scheduling “09:00” for a Los
-  Angeles workspace produced a 19:30 local visit. Converting the input to the workspace zone is a
-  behaviour change that needs an owner decision, so it is recorded here rather than changed.
-- `revenue` is defined in the metric catalogue as the sum of issued invoice totals, so job profit and
-  margin include any tax collected on behalf of a tax authority. This is the documented model; a
-  net-of-tax basis would be a definition change, not a defect fix.
-- The customer detail page still renders `createdAt`/`updatedAt` with the date-only helper, so a customer
-  created in the last hours of a UTC day can show the next day's date in a westward workspace. The same
-  mechanism as the fixed job-drawer defect, but it was not reproduced on live data.
-- Line “Total” cells on an invoice show quantity × price plus tax while the invoice discount reduces the
-  tax base, so their sum does not equal the invoice total when a discount exists (INV-2026-0001: lines 433.00
-  vs total 405.94). The summary shows the authoritative figures; the column mixes bases.
+- ~~Scheduling inputs are interpreted in the device time zone~~ — resolved in §22.1 (V8).
+- ~~`revenue` includes collected tax~~ — changed in §22.3: revenue is net of tax.
+- ~~Customer detail renders `createdAt`/`updatedAt` with the date-only helper~~ — fixed in §22.5.
+- ~~Line “Total” cells mix bases~~ — fixed in §22.5.
+
+---
+
+## 22. P3 hardening — scheduling zones, payment idempotency, tax-exclusive revenue (implemented)
+
+`V8__scheduling_timezone_and_payment_idempotency.sql` is additive: one nullable column plus a CHECK on
+`service_location`, one nullable column and one partial unique index on `payment`. A V7 database upgrades
+with every existing row unchanged — locations without a zone keep using the workspace zone, and payments
+without a key behave exactly as before. The four items below were recorded in §21.5 as accepted risks and
+are closed here; each restates the contract it changes.
+
+### 22.1 Scheduling is resolved in the location's time zone
+
+| Rule | Detail |
+| --- | --- |
+| Zone resolution | `service_location.timezone` (IANA) when present, otherwise `tenant.timezone`. The caller's device zone is never sent and never participates. |
+| Zone validation | `400 VALIDATION_FAILED` for a value that is not an IANA id (`WorkspaceZone.isValid`); the column CHECK keeps the length 3–64 |
+| Request shape | either wall-clock `startLocal`/`endLocal` (`2026-11-02T09:00`, no offset) or instants `scheduledStart`/`scheduledEnd`; both together is `400`; an offset or `Z` inside a local value is `400`; neither is `400` |
+| Endpoints | `POST /jobs`, `POST /jobs/series`, `PUT /jobs/{id}`, `POST /quotes/{id}/convert` |
+| Storage | instants stay UTC (`timestamptz`); only the interpretation of input changed |
+| Recurring series | repeats the location's local wall-clock time, so a series crossing a DST boundary keeps the crew's start hour instead of drifting by an hour |
+| DST edges | a wall-clock time in the spring-forward gap moves forward by the gap (02:30 → 03:30 local); an ambiguous fall-back time takes the earlier offset |
+| Frontend | quote conversion and job dialogs read and submit `datetime-local` values in the location zone (`toZonedLocalValue`, `zonedDefaultWindow`, `addMinutesToLocal`); defaults are tomorrow 09:00–11:00 in that zone |
+
+Covered by `SchedulingTimezoneIT` (8): LA site booked from a Kolkata workspace lands on `17:00Z`, DST gap,
+DST overlap, workspace fallback, instant compatibility, both/offset rejections, and an invalid zone
+rejected when the location is saved.
+
+### 22.2 Payment recording is idempotent
+
+`POST /invoices/{id}/payments` accepts an optional `idempotencyKey` (≤ 64 chars). When the key already
+exists in the workspace, the endpoint returns `201` with the payment the first attempt created; no second
+row is written and the invoice is not recalculated, so `amount_paid` cannot be inflated by a retry. Keys are
+scoped by `tenant_id`, so a key from another workspace cannot read its payment.
+`uq_payment_idempotency (tenant_id, idempotency_key) WHERE idempotency_key IS NOT NULL` is the backstop
+against a simultaneous duplicate.
+
+The dialog generates `crypto.randomUUID()` once per attempt: a timeout-and-retry replays the key, while a
+genuinely new payment is a new attempt with a new key. Covered by `PaymentIdempotencyIT` (3): replay
+returns the original and leaves one payment, a different key is a second payment, and a shared key in
+another workspace is unrelated.
+
+### 22.3 Revenue is net of tax
+
+Tax collected is owed to a tax authority, so it is not revenue:
+
+| Figure | Basis |
+| --- | --- |
+| `revenue`, revenue trend, service/customer/location breakdowns, repeat-customer revenue | `invoice.total − invoice.tax_amount` (`base_total − tax_amount × fx_rate` in base currency), void invoices excluded |
+| Job profitability `revenue` and `plannedRevenue` | same net basis, so the costing panel and analytics agree |
+| `payments_collected` | unchanged: cash actually received, which includes tax |
+| `outstanding_receivable`, `overdue`, ageing | unchanged: what the customer owes includes tax |
+| `job_profit`, `avg_job_margin_percent` | net revenue − direct cost, no longer flattered by collected tax |
+
+`MetricDefinition.REVENUE` states the basis in its definition text. Covered by `TaxExclusiveRevenueIT`:
+100.00 of work plus 10.00 of tax yields revenue 100.00, profit 70.00 (30.00 labour), margin 70.0%,
+outstanding 110.00, and collected 110.00 once the customer pays.
+
+### 22.4 Rollup freshness follows writes, not only the clock
+
+A rollup refreshed shortly before an invoice was issued used to report the old revenue for up to the
+freshness window while every other page showed the new one. `ensureFresh` now also compares
+`analytics_refresh.refreshed_at` with the newest write across invoices, payments, jobs, job costs, work
+logs and expenses (`AnalyticsRollupRepository.latestSourceChange`), so a changed workspace rebuilds on the
+next read while an unchanged one still reads the rollup. The rebuild stays idempotent
+(`ON CONFLICT … DO UPDATE`).
+
+### 22.5 Frontend corrections
+
+- Invoice detail's line column is the **net** line amount, which adds up to the subtotal; a note explains
+  that the invoice-level discount is deducted once in Amounts instead of being mixed into each line.
+- Customer detail formats `createdAt`/`updatedAt` with `formatCalendarDate`, so a westward workspace no
+  longer shows the next day's date.
+- `LocationDialog` exposes an optional time zone for the address, validated server-side as an IANA id.
+
+### 22.6 Verification (session 9)
+
+| Check | Result |
+| --- | --- |
+| `mvn test` | **81 tests, 0 failures** (was 68): `AuthFlowIT` 12, `SchedulingTimezoneIT` 8, `AnalyticsFlowIT` 4, `PaymentIdempotencyIT` 3, `TaxExclusiveRevenueIT` 1, plus the existing suites |
+| `mvn verify` | tests pass; the repackage step fails **only** because the dev API (PID 19324, port 8090) holds `target/operonix-api.jar` — the documented Windows jar-lock limitation, not a code defect |
+| Flyway V1→V8 | applied on a clean embedded PostgreSQL database in every integration test under `ddl-auto=validate` |
+| `npm run typecheck` | clean |
+| `npm run build` | green — 453.64 kB JS / 36.32 kB CSS |

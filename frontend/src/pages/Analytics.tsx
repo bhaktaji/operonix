@@ -142,6 +142,7 @@ export function Analytics() {
           <div className="flex flex-wrap items-center gap-2">
             <Select
               aria-label="Business location"
+              className="w-full sm:w-[190px]"
               value={locationId}
               onChange={(event) => setLocationId(event.target.value)}
             >
@@ -154,6 +155,7 @@ export function Analytics() {
             </Select>
             <Select
               aria-label="Date range"
+              className="w-full sm:w-[170px]"
               value={preset}
               onChange={(event) => setPreset(event.target.value as Preset)}
             >
@@ -314,8 +316,11 @@ export function Analytics() {
                 </tr>
               </thead>
               <tbody>
-                {(breakdown.data?.rows ?? []).map((row: BreakdownRow) => (
-                  <tr key={`${row.label}-${row.id ?? "x"}`} className="border-b border-sand-100 last:border-0">
+                {(breakdown.data?.rows ?? []).map((row: BreakdownRow, index: number) => (
+                  <tr
+                    key={`${row.label}-${row.id ?? "unassigned"}-${index}`}
+                    className="border-b border-sand-100 last:border-0"
+                  >
                     <td className="px-4 py-2 text-ink-800">{row.label}</td>
                     <td className="px-4 py-2 text-right text-ink-900">
                       {formatMoney(row.revenue, breakdown.data!.currency)}

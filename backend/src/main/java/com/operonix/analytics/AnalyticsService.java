@@ -352,13 +352,19 @@ public class AnalyticsService {
                 rows);
     }
 
-    /** Rebuilds the rollup when it is missing, stale, or does not cover the requested range. */
+    /**
+     * Rebuilds the rollup when it is missing, stale, does not cover the requested range, or the
+     * workspace has been written to since the last refresh. The last condition is what stops a
+     * freshly issued invoice from being invisible in Analytics while it shows up everywhere else.
+     */
     private void ensureFresh(Scope scope, Range range) {
         java.time.Instant cutoff = java.time.Instant.now(clock).minus(FRESH_FOR);
+        java.time.Instant newestWrite = rollups.latestSourceChange(scope.tenantId()).orElse(null);
         boolean stale = rollups.status(scope.tenantId())
                 .map(status -> status.refreshedAt().isBefore(cutoff)
                         || status.rangeStart().isAfter(range.from())
-                        || status.rangeEnd().isBefore(range.to()))
+                        || status.rangeEnd().isBefore(range.to())
+                        || (newestWrite != null && newestWrite.isAfter(status.refreshedAt())))
                 .orElse(true);
         if (stale) {
             LocalDate start = rollups.status(scope.tenantId())

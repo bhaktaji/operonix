@@ -371,6 +371,7 @@ Deletion: restricted by locations, quotes, jobs, invoices (archive instead).
 | `postal_code` | varchar(16) | NOT NULL |
 | `country` | varchar(2) | NOT NULL |
 | `access_notes` | varchar(1000) | NULL |
+| `timezone` | varchar(64) | NULL — IANA zone the work happens in (V8); NULL = workspace zone |
 | `is_primary` | boolean | NOT NULL DEFAULT false |
 | `created_at` / `updated_at` | timestamptz | NOT NULL |
 
@@ -532,11 +533,13 @@ Index: `ix_invoice_line_invoice (invoice_id, position)`, unique `uq_invoice_line
 | `reversed_at` | timestamptz | NULL — set when the payment is reversed (V7) |
 | `reversed_by` | uuid | NULL FK → `app_user(id)` ON DELETE SET NULL (V7) |
 | `reversal_reason` | varchar(280) | NULL, reserved for a stated reason (V7) |
+| `idempotency_key` | varchar(64) | NULL — caller key that makes a retried payment a replay (V8) |
 | `created_at` | timestamptz | NOT NULL |
 
 Index: `ix_payment_tenant_invoice (tenant_id, invoice_id)`; `ix_payment_tenant_paid_at (tenant_id, paid_at)`
 for revenue reporting; `ix_payment_active (tenant_id, invoice_id) WHERE reversed_at IS NULL` for the
-live-payments path (V7).
+live-payments path (V7); `uq_payment_idempotency (tenant_id, idempotency_key) WHERE idempotency_key IS
+NOT NULL` makes a duplicate attempt impossible even under a simultaneous retry (V8).
 
 **Reversal is a mark, never a delete.** A payment row is immutable once written: reversing sets
 `reversed_at`/`reversed_by`, the invoice recomputes `amount_paid` from the rows still active, and every
@@ -970,3 +973,31 @@ Invariants now enforced in code and covered by `SalesFlowIT`:
 - Reversing an already-reversed payment is `409 CONFLICT`; the balance cannot be subtracted twice.
 - `metric_daily` (`payments_collected`) and the dashboard's revenue exclude reversed rows, so a
   refunded payment never counts as collected cash.
+
+---
+
+## 12. P3 hardening — scheduling zones and payment idempotency (V8, implemented)
+
+`V8__scheduling_timezone_and_payment_idempotency.sql` is additive. A V7 database upgrades with every
+existing row unchanged: a location without a zone continues to use the workspace zone, and a payment
+without a key behaves exactly as before.
+
+| Change | Definition | Why |
+| --- | --- | --- |
+| `service_location.timezone varchar(64) NULL` + `ck_service_location_timezone` (NULL or 3–64 chars) | IANA id of the zone the work at that address happens in | A visit's wall-clock time belongs to the address, not to the workspace or the device; NULL = workspace zone keeps existing rows working |
+| `payment.idempotency_key varchar(64) NULL` | caller-supplied key identifying one payment attempt | A retried request must not take the money twice |
+| `uq_payment_idempotency (tenant_id, idempotency_key) WHERE idempotency_key IS NOT NULL` | partial unique index | Backstop against a simultaneous duplicate; tenant-scoped, so two workspaces may use the same key |
+
+Invariants:
+
+- A location's zone is validated as an IANA id on write; an unknown zone is `400`, never stored.
+- Stored instants remain UTC (`job.scheduled_start/end` stay `timestamptz`); only the interpretation of
+  input changed, so no existing schedule moves.
+- A recurring series repeats local wall-clock time in the location zone; a spring-forward gap moves forward
+  by the gap and an ambiguous fall-back time takes the earlier offset.
+- A replayed `idempotency_key` returns the original payment row; no second row exists, so
+  `invoice.amount_paid` (the sum of live payments) cannot be inflated by a retry.
+- A key is unique per tenant, not globally; a key from another workspace cannot resolve to its payment.
+- No revenue column changed: revenue is computed net of `tax_amount` (and `tax_amount × fx_rate` in base
+  currency), while outstanding balances, ageing and collected cash still include tax because the customer
+  owes and pays it.

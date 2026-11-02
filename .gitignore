@@ -44,3 +44,11 @@ Thumbs.db
 
 # Freebuff session state
 .freebuff/
+
+# Imported chat attachments (local-only context, never committed)
+.cloud-attachments/
+
+# Local verification logs
+.mvn-verify.log
+.fe-typecheck.log
+.fe-build.log

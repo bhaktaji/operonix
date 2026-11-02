@@ -17,6 +17,7 @@ function blank(primary: boolean): LocationInput {
     postalCode: "",
     country: "US",
     accessNotes: "",
+    timezone: "",
     isPrimary: primary,
   };
 }
@@ -54,6 +55,7 @@ export function LocationDialog({
         postalCode: location.postalCode,
         country: location.country,
         accessNotes: location.accessNotes ?? "",
+        timezone: location.timezone ?? "",
         isPrimary: location.isPrimary,
       });
     } else {
@@ -97,6 +99,7 @@ export function LocationDialog({
       postalCode: form.postalCode.trim(),
       country: form.country.trim().toUpperCase(),
       accessNotes: form.accessNotes?.trim() || undefined,
+      timezone: form.timezone?.trim() || undefined,
       isPrimary: isFirstLocation ? true : form.isPrimary,
     });
   };
@@ -151,6 +154,20 @@ export function LocationDialog({
             />
           </Field>
         </div>
+
+        <Field
+          label="Time zone"
+          htmlFor="loc-timezone"
+          error={errors.timezone}
+          hint="IANA zone for this address, e.g. America/Los_Angeles. Leave blank to use the workspace time zone."
+        >
+          <Input
+            id="loc-timezone"
+            value={form.timezone ?? ""}
+            onChange={(event) => set("timezone", event.target.value)}
+            placeholder="America/Los_Angeles"
+          />
+        </Field>
 
         <Field label="Access notes" htmlFor="loc-access" error={errors.accessNotes}>
           <Textarea
