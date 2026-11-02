@@ -831,3 +831,58 @@ ConvertQuoteDialog, LocationDialog, RecordPaymentDialog, JobDetail, JobCostingPa
    Stop the old API process first or the jar cannot be repackaged.
 4. Remaining P3 candidates (payment capture, email/SMS, customer portal, attachments, Playwright) are not
    started and need owner approval; nothing is deployed and no cloud resource exists.
+
+---
+
+## 18. Session 10 — browser acceptance, screenshots, README, GitHub publication
+
+### 18.1 Scope and outcome
+
+Verified the session-9 changes in a real browser against a freshly built jar (V8 applied to the local
+database), refreshed the four product screenshots and rewrote `README.md`. **No application code was
+changed and no defect was found**, so the 81-test suite and the production build were not re-run (last
+green runs: §17.3). Nothing was deployed; no cloud resource was created.
+
+### 18.2 Browser verification actually performed
+
+Environment: API `http://127.0.0.1:8090` (dev profile, V8 migrated at boot), Vite dev server on
+`http://127.0.0.1:5173`, workspace `Harbor Cleaning Co` (USD, `America/Los_Angeles`), device zone
+**Asia/Kolkata (IST)** — so workspace, location and device zones all differed.
+
+| Check | Result |
+| --- | --- |
+| Location time zone editable | Bayfront Law Group "Main site" set to `America/New_York` through the location dialog; stored (`GET /customers/{id}/locations` returns it) |
+| LA/NY job booked from a Kolkata device | Booked 2026-11-03 09:00 in the dialog; API stored `2026-11-03T14:00:00Z` = 09:00 **EST** — not 17:00Z (workspace LA) and not 03:30Z (device IST) |
+| Recurring series across DST | Weekly × 3 from 2027-03-07 09:00 → `2027-03-07T14:00:00Z`, `2027-03-14T13:00:00Z`, `2027-03-21T13:00:00Z`: local 09:00 held, UTC shifted one hour after the US spring change |
+| Payment idempotency through the UI | Dialog POST carried `idempotencyKey: f386a6f9-13f5-42a9-80db-9be23f45bdbd`; replaying that exact request returned the **same** payment id; invoice kept one 50.00 payment (paid 50.00, balance 339.70) |
+| Tax-exclusive revenue | Analytics revenue `1075.00` = invoices 405.94 + 368.05 + 389.70 (= 1163.69) minus tax 88.69; collected 250.00 and outstanding 913.69 stated separately |
+| Discounted invoice presentation | INV-2026-0001 renders net line amounts (340.00 + 60.00 = 400.00 subtotal), the invoice-level discount note, and `405.94` total |
+| Job costing panel | J-2026-0004 shows cost 42.50, revenue 360.00, profit 317.50, margin 88.19% (net of tax) |
+| Console | Only React Router v7 future-flag warnings (dev-only, pre-existing); no errors, no failed requests |
+
+Observation (not a defect, not changed): the week board groups and displays visit times in the
+**workspace** zone, while the job drawer shows the **location** zone. For a cross-zone site the two read
+differently (LA board shows 06:00 for a 09:00 NY visit). Changing the board is a product decision and is
+left for the owner.
+
+### 18.3 Screenshots
+
+Captured from the running UI at 1280×720 with the demo workspace: `docs/screenshots/dashboard.png`,
+`analytics.png`, `job-costing.png` (job drawer, costing panel open) and `assistant.png` (new). The
+preview panel overlays a small "Freebuff" badge in the top-left corner of every capture; it is injected
+by the capture environment, not by the application, and could not be removed from the image.
+
+### 18.4 README
+
+`README.md` rewritten as a product page: positioning, problems solved, capabilities, BI and grounded-AI
+explanation, the four current screenshots embedded with relative GitHub paths, architecture diagram,
+stack, security/multi-tenancy, quick start and configuration, a roadmap that separates implemented from
+planned work, and links to the deep design documents. No customer, traction, revenue or partnership
+claim is made anywhere.
+
+### 18.5 How to resume
+
+1. `git log --oneline -3` — the documentation/screenshot commit follows `af6f743`.
+2. Re-verify from scratch if needed: `cd backend && mvn test` (81) and `cd frontend && npm run typecheck && npm run build`.
+3. The local stack used for the browser pass is API on :8090 and Vite on :5173; stop both before
+   repackaging the jar (Windows file lock).
